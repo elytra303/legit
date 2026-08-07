@@ -51,7 +51,8 @@ void TryInstall() {
     void* target = SwapBuffersAddr();
     if (!target) return;
     if (MH_Initialize() != MH_OK) return;
-    if (MH_CreateHook(target, &HookSwapBuffers, (void**)&origSwapBuffers) != MH_OK)
+    if (MH_CreateHook(target, reinterpret_cast<LPVOID>(&HookSwapBuffers),
+                      (void**)&origSwapBuffers) != MH_OK)
         return;
     if (MH_EnableHook(target) != MH_OK) {
         origSwapBuffers = nullptr;
