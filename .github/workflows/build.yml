@@ -5,7 +5,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  msvc:
+    name: MSVC x64
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,3 +26,25 @@ jobs:
         with:
           name: summer_client
           path: build/Release/summer_client.dll
+
+  mingw:
+    name: MinGW x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install MinGW
+        run: choco install mingw -y --no-progress
+
+      - name: Configure
+        shell: cmd
+        run: cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        shell: cmd
+        run: cmake --build build

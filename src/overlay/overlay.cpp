@@ -73,6 +73,12 @@ static void FeedKeys(ImGuiIO& io) {
 }
 
 void Overlay::OnSwap() {
+    if (!window_) {
+        typedef void* (*GetCurrentContext_t)(void);
+        static GetCurrentContext_t getCtx = nullptr;
+        if (!getCtx) getCtx = (GetCurrentContext_t)GlfwProc("glfwGetCurrentContext");
+        if (getCtx) window_ = getCtx();
+    }
     if (!window_) return;
 
     if (!glReady_) {

@@ -1,6 +1,9 @@
 #pragma once
 
+#include <imgui.h>
+
 #include "../../math/math.h"
+#include "../../mc/types.h"
 #include "../../module.h"
 
 namespace summer {

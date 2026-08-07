@@ -31,11 +31,11 @@ void ScreenWalk::OnFrame() {
     auto& snap = Client::Instance().Snapshot();
     if (!snap.valid || !snap.hasScreen) return;
 
-    bool up = mc::IsKeyKindDown(KeyKind::Up);
-    bool down = mc::IsKeyKindDown(KeyKind::Down);
-    bool left = mc::IsKeyKindDown(KeyKind::Left);
-    bool right = mc::IsKeyKindDown(KeyKind::Right);
-    bool jump = jump_ && mc::IsKeyKindDown(KeyKind::Jump);
+    bool up = mc::IsKeyKindDown(mc::KeyKind::Up);
+    bool down = mc::IsKeyKindDown(mc::KeyKind::Down);
+    bool left = mc::IsKeyKindDown(mc::KeyKind::Left);
+    bool right = mc::IsKeyKindDown(mc::KeyKind::Right);
+    bool jump = jump_ && mc::IsKeyKindDown(mc::KeyKind::Jump);
 
     float fwd = 0.f, str = 0.f;
     if (forward_) {

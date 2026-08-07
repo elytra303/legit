@@ -16,7 +16,6 @@ AutoSwap::AutoSwap()
 void AutoSwap::Save(Config& c) {
     c.SetBool("autoswap.enabled", Enabled());
     c.SetInt("autoswap.key", Key());
-    c.SetBool("autoswap.onlyInCombat", onlyInCombat_);
     c.SetBool("autoswap.switchBack", switchBack_);
     c.SetBool("autoswap.players", targetPlayers_);
     c.SetBool("autoswap.mobs", targetMobs_);
@@ -27,7 +26,6 @@ void AutoSwap::Save(Config& c) {
 void AutoSwap::Load(const Config& c) {
     SetEnabled(c.GetBool("autoswap.enabled", false));
     SetKey(c.GetInt("autoswap.key", 0));
-    onlyInCombat_ = c.GetBool("autoswap.onlyInCombat", true);
     switchBack_ = c.GetBool("autoswap.switchBack", true);
     targetPlayers_ = c.GetBool("autoswap.players", true);
     targetMobs_ = c.GetBool("autoswap.mobs", false);
@@ -102,7 +100,6 @@ void AutoSwap::OnFrame() {
     }
 
     inCombat_ = true;
-    if (!onlyInCombat_ && !near) return;
 
     int cur = mc::GetSelectedSlot();
     if (cur < 0) return;
@@ -145,7 +142,6 @@ void AutoSwap::DrawSettings() {
     gui::SliderFloat("Range", &range_, 1.f, 8.f);
     gui::Separator();
     gui::Section("BEHAVIOR");
-    gui::Checkbox("Only in combat", &onlyInCombat_);
     gui::Checkbox("Switch back after", &switchBack_);
     gui::Help("Scores sword > mace > axe > trident, then material");
 }

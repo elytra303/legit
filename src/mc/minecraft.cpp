@@ -6,6 +6,7 @@
 #include "../util/log.h"
 
 #include <string>
+#include <utility>
 
 namespace summer {
 namespace mc {
@@ -1036,6 +1037,23 @@ float GetForwardImpulse() {
     return out;
 }
 
+float GetLeftImpulse() {
+    JNIEnv* env = JVM::Env();
+    if (!env || !ids.ok || !ids.p_getInput || !ids.in_leftImpulse) return 0.f;
+    jobject local = GetPlayer(env);
+    if (!local) return 0.f;
+    float out = 0.f;
+    jobject input = env->CallObjectMethod(local, ids.p_getInput);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    } else if (input) {
+        out = env->GetFloatField(input, ids.in_leftImpulse);
+        env->DeleteLocalRef(input);
+    }
+    env->DeleteLocalRef(local);
+    return out;
+}
+
 bool IsKeySneakDown() { return IsKeyDown(ids.o_keySneak); }
 
 void SetInputMovement(float forward, float left, bool up, bool down, bool leftKey,
@@ -1073,7 +1091,8 @@ bool GetHotbarItemName(int slot, std::string& out) {
                                      : nullptr;
     if (env->ExceptionCheck()) env->ExceptionClear();
     if (inv) {
-        jobject items = env->GetObjectField(inv, ids.i_items);
+        jobject items =
+            ids.i_items ? env->GetObjectField(inv, ids.i_items) : nullptr;
         if (items) {
             jobject stack = ids.list_get ? env->CallObjectMethod(items, ids.list_get,
                                                                  (jint)slot)

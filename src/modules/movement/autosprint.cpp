@@ -1,5 +1,7 @@
 #include "autosprint.h"
 
+#include <cmath>
+
 #include "../../gui/gui.h"
 #include "../../mc/minecraft.h"
 #include "../../util/random.h"
@@ -46,8 +48,7 @@ void AutoSprint::OnFrame() {
 
     float fwd = mc::GetForwardImpulse();
     bool canSprint = fwd > 0.01f;
-    if (onlyForward_ && fwd > 0.01f && mc::GetForwardImpulse() < fwd)
-        canSprint = false;
+    if (onlyForward_ && std::fabs(mc::GetLeftImpulse()) > 0.01f) canSprint = false;
     if (noSneak_ && mc::IsKeySneakDown()) canSprint = false;
     if (!noFoodCheck_ && mc::GetFoodLevel() <= 6.0) canSprint = false;
 

@@ -52,6 +52,7 @@ void ClearScreenInput();  // neutralize player input while our GUI is open
 void SetInputMovement(float forward, float left, bool up, bool down,
                       bool leftKey, bool rightKey, bool jump);
 float GetForwardImpulse();
+float GetLeftImpulse();
 bool IsKeySneakDown();
 bool GetHotbarItemName(int slot, std::string& out);
 

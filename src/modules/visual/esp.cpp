@@ -1,5 +1,6 @@
 #include "esp.h"
 
+#include <cstdio>
 #include <imgui.h>
 
 #include "../../gui/gui.h"
@@ -111,7 +112,6 @@ void ESPModule::OnRender() {
         }
 
         ImU32 col = ColorFor(e);
-        float bw = maxX - minX;
         float bh = maxY - minY;
 
         if (box_) {

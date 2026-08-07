@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../math/math.h"
+#include "../../mc/types.h"
 #include "../../module.h"
 #include "../../util/timer.h"
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../mc/types.h"
 #include "../../module.h"
 #include "../../util/timer.h"
 
@@ -15,7 +16,6 @@ public:
     void Load(const Config& cfg) override;
 
 private:
-    bool onlyInCombat_ = true;
     bool switchBack_ = true;
     bool targetPlayers_ = true;
     bool targetMobs_ = false;
