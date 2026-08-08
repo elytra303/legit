@@ -298,7 +298,7 @@ bool EnsureResolved() {
 
     // ---- Minecraft fields ----
     ids.f_player = JVM::FindField("Minecraft.player", ids.mcCls,
-                                  (localPlayerSig = Sig(ids.localPlayerCls)).c_str(),
+                                  Sig(ids.localPlayerCls).c_str(),
                                   {"player"});
     ids.f_level = JVM::FindField("Minecraft.level", ids.mcCls, levelSig.c_str(),
                                  {"level", "clientLevel"});

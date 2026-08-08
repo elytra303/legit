@@ -36,6 +36,7 @@ public:
     void Toggle();
     void SetEnabled(bool on);
 
+    int& Key() { return key_; }
     int Key() const { return key_; }
     void SetKey(int k) { key_ = k; }
 

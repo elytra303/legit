@@ -145,8 +145,9 @@ void ESPModule::OnRender() {
         if (health_ && e.maxHealth > 0.f) {
             float frac = std::clamp(e.health / e.maxHealth, 0.f, 1.f);
             float h = bh;
-            ImU32 hcol = ImLerp(IM_COL32(240, 60, 60, 255), IM_COL32(90, 230, 90, 255),
-                                frac);
+            ImU32 hcol = IM_COL32(
+                (int)(240 + (90 - 240) * frac), (int)(60 + (230 - 60) * frac),
+                (int)(60 + (90 - 60) * frac), 255);
             float bx = minX - 4.f;
             dl->AddRectFilled(ImVec2(bx - 1, minY - 1), ImVec2(bx + 2, maxY + 1),
                               IM_COL32(0, 0, 0, 160));

@@ -366,6 +366,8 @@ void Section(const char* title) {
     ImGui::Separator();
 }
 
+void Separator() { ImGui::Separator(); }
+
 void Help(const char* text) { ImGui::TextDisabled("%s", text); }
 
 }  // namespace gui

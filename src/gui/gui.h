@@ -17,6 +17,7 @@ bool Combo(const char* label, int* idx, const char* const* items, int count);
 bool Keybind(const char* label, int* key);
 bool KeybindButton(int* key);
 void Section(const char* title);
+void Separator();
 void Help(const char* text);
 const char* KeyName(int vk);
 

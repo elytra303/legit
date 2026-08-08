@@ -54,6 +54,7 @@ void SetInputMovement(float forward, float left, bool up, bool down,
 float GetForwardImpulse();
 float GetLeftImpulse();
 bool IsKeySneakDown();
+bool IsKeyAttackDown();
 bool GetHotbarItemName(int slot, std::string& out);
 
 }  // namespace mc
