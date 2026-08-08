@@ -20,17 +20,7 @@ static bool g_loaderSearched = false;
 void JVM::Init(JavaVM* v, jvmtiEnv* t) {
     vm = v;
     jvmti = t;
-    if (jvmti) {
-        jvmtiCapabilities caps;
-        memset(&caps, 0, sizeof(caps));
-        caps.can_get_loaded_classes = 1;
-        caps.can_get_threads = 1;
-        caps.can_get_thread_info = 1;
-        caps.can_get_thread_class_loader = 1;
-        jvmtiError e = jvmti->AddCapabilities(&caps);
-        Log("[Summer] JVMTI capabilities added (err=%d)", (int)e);
-    }
-    Log("[Summer] JVM initialized");
+    Log("[Summer] JVM initialized (jvmti=%s)", jvmti ? "yes" : "no");
 }
 
 JNIEnv* JVM::Env() {
@@ -150,9 +140,10 @@ jobject JVM::GameLoader(JNIEnv* env) {
     jthread found = nullptr;
     for (jint i = 0; i < count && !found; ++i) {
         if (!threads[i]) continue;
-        char* name = nullptr;
-        if (jvmti->GetThreadName(threads[i], &name) != JVMTI_ERROR_NONE || !name)
-            continue;
+        jvmtiThreadInfo info;
+        memset(&info, 0, sizeof(info));
+        if (jvmti->GetThreadInfo(threads[i], &info) != JVMTI_ERROR_NONE) continue;
+        const char* name = info.name ? info.name : "";
         for (const char* k : kNames) {
             if (strcmp(name, k) == 0) {
                 found = threads[i];
@@ -160,30 +151,22 @@ jobject JVM::GameLoader(JNIEnv* env) {
             }
         }
         if (!found && strstr(name, "Render")) found = threads[i];
-        jvmti->Deallocate((unsigned char*)name);
+        if (info.name) jvmti->Deallocate((unsigned char*)info.name);
     }
+    if (threads) jvmti->Deallocate((unsigned char*)threads);
 
     jobject loader = nullptr;
     if (found) {
-        jobject l = nullptr;
-        if (jvmti->GetThreadClassLoader(found, &l) == JVMTI_ERROR_NONE && l) {
-            loader = env->NewGlobalRef(l);
-        } else {
-            jclass tCls = env->FindClass("java/lang/Thread");
-            jmethodID gcl = tCls ? env->GetMethodID(tCls, "getContextClassLoader",
-                                                    "()Ljava/lang/ClassLoader;")
-                                 : nullptr;
-            if (gcl) {
-                jobject jl = env->CallObjectMethod(found, gcl);
-                if (env->ExceptionCheck()) env->ExceptionClear();
-                if (jl) {
-                    loader = env->NewGlobalRef(jl);
-                    env->DeleteLocalRef(jl);
-                }
+        jvmtiThreadInfo info;
+        memset(&info, 0, sizeof(info));
+        if (jvmti->GetThreadInfo(found, &info) == JVMTI_ERROR_NONE) {
+            if (info.context_class_loader) {
+                loader = env->NewGlobalRef(info.context_class_loader);
+                env->DeleteLocalRef(info.context_class_loader);
             }
+            if (info.name) jvmti->Deallocate((unsigned char*)info.name);
         }
     }
-    if (threads) jvmti->Deallocate((unsigned char*)threads);
 
     if (loader) {
         g_gameLoader = loader;
