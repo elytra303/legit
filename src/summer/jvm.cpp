@@ -14,10 +14,22 @@ JavaVM* JVM::vm = nullptr;
 jvmtiEnv* JVM::jvmti = nullptr;
 
 static std::unordered_map<std::string, jclass> g_classCache;
+static jobject g_gameLoader = nullptr;  // global ref to the game class loader
+static bool g_loaderSearched = false;
 
 void JVM::Init(JavaVM* v, jvmtiEnv* t) {
     vm = v;
     jvmti = t;
+    if (jvmti) {
+        jvmtiCapabilities caps;
+        memset(&caps, 0, sizeof(caps));
+        caps.can_get_loaded_classes = 1;
+        caps.can_get_threads = 1;
+        caps.can_get_thread_info = 1;
+        caps.can_get_thread_class_loader = 1;
+        jvmtiError e = jvmti->AddCapabilities(&caps);
+        Log("[Summer] JVMTI capabilities added (err=%d)", (int)e);
+    }
     Log("[Summer] JVM initialized");
 }
 
@@ -61,6 +73,127 @@ std::string JVM::ClassSig(jclass cls) {
     return n.empty() ? "" : "L" + n + ";";
 }
 
+static jclass LoadWithLoader(JNIEnv* env, jobject loader, const std::string& dotted) {
+    if (!env || !loader) return nullptr;
+    jclass clCls = env->FindClass("java/lang/ClassLoader");
+    if (!clCls) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+    jmethodID loadClass =
+        env->GetMethodID(clCls, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;");
+    if (!loadClass) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+    jstring name = env->NewStringUTF(dotted.c_str());
+    if (!name) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+    jclass c = (jclass)env->CallObjectMethod(loader, loadClass, name);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    return c;
+}
+
+static jobject GetContextLoader(JNIEnv* env) {
+    if (!env) return nullptr;
+    jclass threadCls = env->FindClass("java/lang/Thread");
+    if (!threadCls) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+    jmethodID cur =
+        env->GetStaticMethodID(threadCls, "currentThread", "()Ljava/lang/Thread;");
+    if (!cur) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+    jobject th = env->CallStaticObjectMethod(threadCls, cur);
+    if (!th) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+    jmethodID gcl = env->GetMethodID(threadCls, "getContextClassLoader",
+                                     "()Ljava/lang/ClassLoader;");
+    if (!gcl) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+    jobject loader = env->CallObjectMethod(th, gcl);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    return loader;
+}
+
+// Minecraft's classes are loaded by the class loader of the game's main
+// thread ("Render thread" / "main" / "Client thread"). Our swap-hook thread
+// has no (or a wrong) context class loader, so grab the game's loader once
+// via the cheap JVMTI thread list and reuse it for every lookup. Enumerating
+// *all* loaded classes per frame (JVMTI GetLoadedClasses) is far too slow for
+// the render thread and was freezing the game - never do that here.
+jobject JVM::GameLoader(JNIEnv* env) {
+    if (!env) return nullptr;
+    if (g_gameLoader) return env->NewLocalRef(g_gameLoader);
+    if (g_loaderSearched || !jvmti) return nullptr;
+    g_loaderSearched = true;
+
+    jint count = 0;
+    jthread* threads = nullptr;
+    if (jvmti->GetAllThreads(&count, &threads) != JVMTI_ERROR_NONE || count <= 0) {
+        if (threads) jvmti->Deallocate((unsigned char*)threads);
+        LogWarn("[Summer] GetAllThreads failed");
+        return nullptr;
+    }
+
+    static const char* kNames[] = {"Render thread", "main", "Client thread",
+                                   "Server thread", "Main Thread", "main thread"};
+    jthread found = nullptr;
+    for (jint i = 0; i < count && !found; ++i) {
+        if (!threads[i]) continue;
+        char* name = nullptr;
+        if (jvmti->GetThreadName(threads[i], &name) != JVMTI_ERROR_NONE || !name)
+            continue;
+        for (const char* k : kNames) {
+            if (strcmp(name, k) == 0) {
+                found = threads[i];
+                break;
+            }
+        }
+        if (!found && strstr(name, "Render")) found = threads[i];
+        jvmti->Deallocate((unsigned char*)name);
+    }
+
+    jobject loader = nullptr;
+    if (found) {
+        jobject l = nullptr;
+        if (jvmti->GetThreadClassLoader(found, &l) == JVMTI_ERROR_NONE && l) {
+            loader = env->NewGlobalRef(l);
+        } else {
+            jclass tCls = env->FindClass("java/lang/Thread");
+            jmethodID gcl = tCls ? env->GetMethodID(tCls, "getContextClassLoader",
+                                                    "()Ljava/lang/ClassLoader;")
+                                 : nullptr;
+            if (gcl) {
+                jobject jl = env->CallObjectMethod(found, gcl);
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                if (jl) {
+                    loader = env->NewGlobalRef(jl);
+                    env->DeleteLocalRef(jl);
+                }
+            }
+        }
+    }
+    if (threads) jvmti->Deallocate((unsigned char*)threads);
+
+    if (loader) {
+        g_gameLoader = loader;
+        Log("[Summer] cached game class loader");
+        return env->NewLocalRef(loader);
+    }
+    LogWarn("[Summer] game class loader not found");
+    return nullptr;
+}
+
 static jclass LoadClassImpl(JNIEnv* env, const std::string& slashed) {
     jclass c = env->FindClass(slashed.c_str());
     if (env->ExceptionCheck()) env->ExceptionClear();
@@ -70,70 +203,16 @@ static jclass LoadClassImpl(JNIEnv* env, const std::string& slashed) {
     for (auto& ch : dotted)
         if (ch == '/') ch = '.';
 
-    jclass threadCls = env->FindClass("java/lang/Thread");
-    if (!threadCls) return nullptr;
-    jmethodID cur =
-        env->GetStaticMethodID(threadCls, "currentThread", "()Ljava/lang/Thread;");
-    if (!cur) {
-        env->ExceptionClear();
-        return nullptr;
-    }
-    jobject th = env->CallStaticObjectMethod(threadCls, cur);
-    if (!th) return nullptr;
-    jmethodID gcl =
-        env->GetMethodID(threadCls, "getContextClassLoader", "()Ljava/lang/ClassLoader;");
-    if (!gcl) {
-        env->ExceptionClear();
-        return nullptr;
-    }
-    jobject loader = env->CallObjectMethod(th, gcl);
-    if (!loader) return nullptr;
-    jclass clCls = env->FindClass("java/lang/ClassLoader");
-    if (!clCls) return nullptr;
-    jmethodID loadClass =
-        env->GetMethodID(clCls, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;");
-    if (!loadClass) {
-        env->ExceptionClear();
-        return nullptr;
-    }
-    jstring name = env->NewStringUTF(dotted.c_str());
-    c = (jclass)env->CallObjectMethod(loader, loadClass, name);
-    if (env->ExceptionCheck()) env->ExceptionClear();
-    return c;
-}
+    jobject ctx = GetContextLoader(env);
+    c = LoadWithLoader(env, ctx, dotted);
+    if (ctx) env->DeleteLocalRef(ctx);
+    if (c) return c;
 
-// The swap-hook thread often has no (or a wrong) context class loader, so
-// JNI FindClass cannot see the game classes. Enumerating loaded classes via
-// JVMTI finds them regardless of thread or class loader.
-static jclass LoadClassViaJvmti(JNIEnv* env, const char* binName) {
-    if (!JVM::jvmti) return nullptr;
-    jint count = 0;
-    jclass* classes = nullptr;
-    if (JVM::jvmti->GetLoadedClasses(&count, &classes) != JVMTI_ERROR_NONE ||
-        count <= 0) {
-        return nullptr;
-    }
-    std::string target(binName);
-    jclass found = nullptr;
-    for (jint i = 0; i < count && !found; ++i) {
-        if (!classes[i]) continue;
-        char* sig = nullptr;
-        if (JVM::jvmti->GetClassSignature(classes[i], &sig, nullptr) !=
-                JVMTI_ERROR_NONE ||
-            !sig) {
-            continue;
-        }
-        std::string s(sig);
-        JVM::jvmti->Deallocate((unsigned char*)sig);
-        if (s.size() >= 2 && s[0] == 'L' && s.back() == ';')
-            s = s.substr(1, s.size() - 2);
-        else
-            continue;
-        if (s == target) found = classes[i];
-    }
-    if (classes) JVM::jvmti->Deallocate((unsigned char*)classes);
-    if (!found) return nullptr;
-    return (jclass)env->NewGlobalRef(found);
+    jobject game = JVM::GameLoader(env);
+    c = LoadWithLoader(env, game, dotted);
+    if (game) env->DeleteLocalRef(game);
+    if (c) Log("[Summer] resolved class %s via game loader", slashed.c_str());
+    return c;
 }
 
 jclass JVM::FindClass(const char* binName) {
@@ -142,14 +221,6 @@ jclass JVM::FindClass(const char* binName) {
     auto it = g_classCache.find(binName);
     if (it != g_classCache.end()) return it->second;
     jclass local = LoadClassImpl(env, binName);
-    if (!local) {
-        local = LoadClassViaJvmti(env, binName);
-        if (local) {
-            Log("[Summer] resolved class %s via JVMTI", binName);
-            g_classCache[binName] = local;
-            return local;
-        }
-    }
     if (!local) return nullptr;
     jclass global = (jclass)env->NewGlobalRef(local);
     env->DeleteLocalRef(local);

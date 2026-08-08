@@ -5,6 +5,7 @@
 #include "../summer/jvm.h"
 #include "../util/log.h"
 
+#include <chrono>
 #include <string>
 #include <utility>
 
@@ -240,6 +241,14 @@ bool IsHostileName(const std::string& n) {
 
 bool EnsureResolved() {
     if (ids.ok) return true;
+
+    // The game is usually still booting when the hook first fires. Retry at
+    // most once per second instead of hammering the JVM every frame.
+    static auto s_lastTry = std::chrono::steady_clock::time_point{};
+    auto now = std::chrono::steady_clock::now();
+    if (now - s_lastTry < std::chrono::milliseconds(1000)) return false;
+    s_lastTry = now;
+
     if (ids.tried) return false;
     ids.tried = true;
 

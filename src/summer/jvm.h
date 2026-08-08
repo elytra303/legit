@@ -30,6 +30,7 @@ public:
 
     static jclass FindClass(const char* binName);
     static jclass FindFirstClass(std::initializer_list<const char*> names);
+    static jobject GameLoader(JNIEnv* env);  // local ref to game class loader
     static std::string GetClassName(jclass cls);  // slashed binary name
     static std::string ClassSig(jclass cls);      // "Lnet/.../Class;"
 
