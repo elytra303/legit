@@ -81,8 +81,23 @@ void Overlay::OnSwap() {
     }
     if (!window_) return;
 
+    // If the GL context changed (fullscreen toggle, video settings, etc.) the
+    // previously uploaded font texture is stale garbage in the new context.
+    // Detect that and rebuild ImGui so the font atlas is re-uploaded.
+    void* ctx = wglGetCurrentContext();
+    if (!ctx) return;
+    if (ctx != lastCtx_) {
+        if (glReady_) {
+            ImGui_ImplOpenGL3_Shutdown();
+            ImGui::DestroyContext();
+            glReady_ = false;
+            imguiReady_ = false;
+            Log("[Overlay] GL context changed, reinitialized ImGui");
+        }
+        lastCtx_ = ctx;
+    }
+
     if (!glReady_) {
-        if (!wglGetCurrentContext()) return;
         ImGui::CreateContext();
         ImGui::GetIO().IniFilename = nullptr;
         ImGui_ImplOpenGL3_Init("#version 130");

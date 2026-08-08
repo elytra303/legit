@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include <GL/gl.h>
+
 #include "../client.h"
 #include "../config.h"
 #include "../jvm.h"
@@ -161,6 +163,17 @@ void ApplyTheme() {
         (void*)gui::kFontVerdana, (int)sizeof(gui::kFontVerdana), 20.f, &cfg);
     if (!g_titleFont) g_titleFont = g_font;
     io.FontDefault = g_font;
+
+    // Force the atlas build now (normally lazy) so failures surface in the
+    // log instead of silently producing a garbage texture.
+    bool built = io.Fonts->Build();
+    Log("[GUI] fonts: regular=%p title=%p verdana=%u bytes", (void*)g_font,
+        (void*)g_titleFont, (unsigned)sizeof(gui::kFontVerdana));
+    Log("[GUI] atlas build=%d texture=%dx%d", built ? 1 : 0,
+        (int)io.Fonts->TexWidth, (int)io.Fonts->TexHeight);
+    GLint maxTex = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
+    Log("[GUI] GL_MAX_TEXTURE_SIZE=%d", (int)maxTex);
 
     ImGuiStyle& s = ImGui::GetStyle();
     s.WindowPadding = ImVec2(8, 8);
