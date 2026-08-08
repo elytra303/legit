@@ -27,6 +27,7 @@ int GetSelectedSlot();
 void SetSprinting(bool v);
 bool IsSprinting();
 void SetKeySprint(bool down);
+void SetKeyUse(bool down);
 
 enum class KeyKind {
     Forward = 0,

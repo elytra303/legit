@@ -131,7 +131,7 @@ void ElytraSwapModule::OnFrame() {
         return;
     }
 
-    bool jump = mc::IsKeyKindDown(KeyKind::Jump);
+    bool jump = mc::IsKeyKindDown(mc::KeyKind::Jump);
 
     // mode 0: dedicated swap key (rising edge)
     if (mode_ == 0 && swapKey_ > 0) {
