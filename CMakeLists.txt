@@ -30,11 +30,13 @@ set(SUMMER_SOURCES
     src/modules/combat/hitbox.cpp
     src/modules/combat/triggerbot.cpp
     src/modules/combat/autoswap.cpp
+    src/modules/combat/clickpearl.cpp
     src/modules/visual/esp.cpp
     src/modules/visual/hitboxes.cpp
     src/modules/visual/removals.cpp
     src/modules/movement/autosprint.cpp
     src/modules/movement/screenwalk.cpp
+    src/modules/movement/elytraswap.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp

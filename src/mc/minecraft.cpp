@@ -96,10 +96,15 @@ struct Ids {
 
     jclass itemStackCls = nullptr, itemCls = nullptr, nonNullListCls = nullptr;
     jclass listCls = nullptr;
-    jfieldID i_items = nullptr;
+    jclass clickTypeCls = nullptr, menuCls = nullptr;
+    jfieldID i_items = nullptr, i_armor = nullptr;
+    jfieldID ct_quickMove = nullptr;
+    jfieldID p_containerMenu = nullptr;
     jmethodID is_getItem = nullptr;
     jmethodID item_getDescriptionId = nullptr;
     jmethodID list_get = nullptr;
+    jmethodID gm_handleInventoryClick = nullptr;
+    jmethodID menu_clicked = nullptr;
 };
 
 static Ids ids;
@@ -108,6 +113,7 @@ static std::string mcSig, entitySig, livingSig, playerSig, levelSig, aabbSig;
 static std::string vec3Sig, optionsSig, keyMappingSig, cameraSig, componentSig;
 static std::string teamSig, entityTypeSig, inventorySig, inputSig;
 static std::string interactionHandSig, foodDataSig, optionInstanceSig;
+static std::string clickTypeSig, menuSig;
 
 std::string Sig(jclass cls) { return JVM::ClassSig(cls); }
 
@@ -149,6 +155,29 @@ std::string ComponentString(JNIEnv* env, jobject component) {
     env->ReleaseStringUTFChars(s, utf);
     env->DeleteLocalRef(s);
     return out;
+}
+
+bool StackItemName(JNIEnv* env, jobject stack, std::string& out) {
+    out.clear();
+    if (!env || !stack || !ids.is_getItem || !ids.item_getDescriptionId)
+        return false;
+    jobject item = env->CallObjectMethod(stack, ids.is_getItem);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (!item) return false;
+    jstring s = (jstring)env->CallObjectMethod(item, ids.item_getDescriptionId);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    bool ok = false;
+    if (s) {
+        const char* utf = env->GetStringUTFChars(s, nullptr);
+        if (utf) {
+            out = utf;
+            ok = true;
+            env->ReleaseStringUTFChars(s, utf);
+        }
+        env->DeleteLocalRef(s);
+    }
+    env->DeleteLocalRef(item);
+    return ok;
 }
 
 Vec3 EntityPosition(JNIEnv* env, jobject ent) {
@@ -245,6 +274,10 @@ bool EnsureResolved() {
     ids.entityTypeCls = JVM::FindFirstClass({"net/minecraft/world/entity/EntityType"});
     ids.optionInstanceCls =
         JVM::FindFirstClass({"net/minecraft/client/OptionInstance"});
+    ids.clickTypeCls =
+        JVM::FindFirstClass({"net/minecraft/world/inventory/ClickType"});
+    ids.menuCls =
+        JVM::FindFirstClass({"net/minecraft/world/inventory/AbstractContainerMenu"});
 
     if (!ids.mcCls || !ids.entityCls || !ids.playerCls) {
         LogWarn("[Summer] failed to resolve core classes (game not loaded yet?)");
@@ -270,6 +303,8 @@ bool EnsureResolved() {
     interactionHandSig = Sig(ids.interactionHandCls);
     foodDataSig = Sig(ids.foodDataCls);
     optionInstanceSig = Sig(ids.optionInstanceCls);
+    clickTypeSig = Sig(ids.clickTypeCls);
+    menuSig = Sig(ids.menuCls);
 
     // ---- Minecraft singleton ----
     ids.m_getInstance =
@@ -502,6 +537,22 @@ bool EnsureResolved() {
         {"getDescriptionId"});
     ids.list_get = JVM::FindMethod("List.get", ids.listCls, "(I)Ljava/lang/Object;",
                                    false, {"get"});
+    ids.i_armor = JVM::FindField("Inventory.armor", ids.inventoryCls,
+                                 Sig(ids.nonNullListCls).c_str(), {"armor"});
+
+    // ---- inventory clicks (shift-click swap used by ElytraSwap) ----
+    ids.ct_quickMove = JVM::FindField("ClickType.QUICK_MOVE", ids.clickTypeCls,
+                                      clickTypeSig.c_str(), {"QUICK_MOVE"});
+    ids.gm_handleInventoryClick = JVM::FindMethod(
+        "GameMode.handleInventoryMouseClick", ids.gameModeCls,
+        ("(III" + clickTypeSig + playerSig + ")V").c_str(), false,
+        {"handleInventoryMouseClick", "handleInventoryMouseClickMoveItem"});
+    ids.p_containerMenu = JVM::FindField("Player.containerMenu", ids.playerCls,
+                                         menuSig.c_str(), {"containerMenu"});
+    ids.menu_clicked = JVM::FindMethod(
+        "AbstractContainerMenu.clicked", ids.menuCls,
+        ("(II" + clickTypeSig + playerSig + ")V").c_str(), false,
+        {"clicked", "doClick"});
 
     // ---- Input ----
     ids.in_forwardImpulse = JVM::FindField("Input.forwardImpulse", ids.inputCls, "F",
@@ -830,6 +881,44 @@ int GetSelectedSlot() {
     return out;
 }
 
+bool InventoryQuickMove(int containerId, int slotId) {
+    JNIEnv* env = JVM::Env();
+    if (!env || !ids.ok || slotId < 0) return false;
+    if (!ids.ct_quickMove) return false;
+    jobject ct = env->GetStaticObjectField(ids.clickTypeCls, ids.ct_quickMove);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (!ct) return false;
+
+    bool done = false;
+    jobject local = GetPlayer(env);
+    if (local) {
+        if (ids.gm_handleInventoryClick && ids.f_gameMode) {
+            jobject gm = GetField(env, ids.mcInstance, ids.f_gameMode);
+            if (gm) {
+                env->CallVoidMethod(gm, ids.gm_handleInventoryClick,
+                                    (jint)containerId, (jint)slotId, (jint)0, ct,
+                                    local);
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                env->DeleteLocalRef(gm);
+                done = true;
+            }
+        } else if (ids.menu_clicked && ids.p_containerMenu) {
+            jobject menu = env->GetObjectField(local, ids.p_containerMenu);
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            if (menu) {
+                env->CallVoidMethod(menu, ids.menu_clicked, (jint)slotId, (jint)0, ct,
+                                    local);
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                env->DeleteLocalRef(menu);
+                done = true;
+            }
+        }
+        env->DeleteLocalRef(local);
+    }
+    env->DeleteLocalRef(ct);
+    return done;
+}
+
 void SetSprinting(bool v) {
     JNIEnv* env = JVM::Env();
     if (!env || !ids.ok || !ids.l_setSprinting) return;
@@ -855,6 +944,19 @@ void SetKeySprint(bool down) {
     jobject options = GetOptions(env);
     if (!options) return;
     jobject km = env->GetObjectField(options, ids.o_keySprint);
+    if (km) {
+        env->CallVoidMethod(km, ids.km_setDown, (jboolean)down);
+        env->DeleteLocalRef(km);
+    }
+    env->DeleteLocalRef(options);
+}
+
+void SetKeyUse(bool down) {
+    JNIEnv* env = JVM::Env();
+    if (!env || !ids.ok || !ids.o_keyUse || !ids.km_setDown) return;
+    jobject options = GetOptions(env);
+    if (!options) return;
+    jobject km = env->GetObjectField(options, ids.o_keyUse);
     if (km) {
         env->CallVoidMethod(km, ids.km_setDown, (jboolean)down);
         env->DeleteLocalRef(km);
@@ -1080,10 +1182,12 @@ void SetInputMovement(float forward, float left, bool up, bool down, bool leftKe
     env->DeleteLocalRef(local);
 }
 
-bool GetHotbarItemName(int slot, std::string& out) {
+bool GetInventoryItemName(int slot, std::string& out) {
     out.clear();
+    if (slot < 0 || slot > 35) return false;
     JNIEnv* env = JVM::Env();
-    if (!env || !ids.ok || slot < 0 || slot > 8) return false;
+    if (!env || !ids.ok || !ids.p_getInventory || !ids.i_items || !ids.list_get)
+        return false;
     jobject local = GetPlayer(env);
     if (!local) return false;
     bool ok = false;
@@ -1093,36 +1197,54 @@ bool GetHotbarItemName(int slot, std::string& out) {
     if (inv) {
         jobject items =
             ids.i_items ? env->GetObjectField(inv, ids.i_items) : nullptr;
+        if (env->ExceptionCheck()) env->ExceptionClear();
         if (items) {
             jobject stack = ids.list_get ? env->CallObjectMethod(items, ids.list_get,
                                                                  (jint)slot)
                                          : nullptr;
-            if (env->ExceptionCheck()) {
-                env->ExceptionClear();
-            } else if (stack) {
-                jobject item = ids.is_getItem ? env->CallObjectMethod(stack, ids.is_getItem)
-                                              : nullptr;
-                if (env->ExceptionCheck()) env->ExceptionClear();
-                if (item) {
-                    jstring s = ids.item_getDescriptionId
-                                    ? (jstring)env->CallObjectMethod(
-                                          item, ids.item_getDescriptionId)
-                                    : nullptr;
-                    if (env->ExceptionCheck()) env->ExceptionClear();
-                    if (s) {
-                        const char* utf = env->GetStringUTFChars(s, nullptr);
-                        if (utf) {
-                            out = utf;
-                            env->ReleaseStringUTFChars(s, utf);
-                            ok = true;
-                        }
-                        env->DeleteLocalRef(s);
-                    }
-                    env->DeleteLocalRef(item);
-                }
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            if (stack) {
+                ok = StackItemName(env, stack, out);
                 env->DeleteLocalRef(stack);
             }
             env->DeleteLocalRef(items);
+        }
+        env->DeleteLocalRef(inv);
+    }
+    env->DeleteLocalRef(local);
+    return ok;
+}
+
+bool GetHotbarItemName(int slot, std::string& out) {
+    if (slot < 0 || slot > 8) return false;
+    return GetInventoryItemName(slot, out);
+}
+
+bool GetArmorItemName(int armorIndex, std::string& out) {
+    out.clear();
+    if (armorIndex < 0 || armorIndex > 3) return false;
+    JNIEnv* env = JVM::Env();
+    if (!env || !ids.ok || !ids.p_getInventory || !ids.i_armor || !ids.list_get)
+        return false;
+    jobject local = GetPlayer(env);
+    if (!local) return false;
+    bool ok = false;
+    jobject inv = ids.p_getInventory ? env->CallObjectMethod(local, ids.p_getInventory)
+                                     : nullptr;
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (inv) {
+        jobject armor = ids.i_armor ? env->GetObjectField(inv, ids.i_armor) : nullptr;
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        if (armor) {
+            jobject stack = ids.list_get ? env->CallObjectMethod(armor, ids.list_get,
+                                                                 (jint)armorIndex)
+                                         : nullptr;
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            if (stack) {
+                ok = StackItemName(env, stack, out);
+                env->DeleteLocalRef(stack);
+            }
+            env->DeleteLocalRef(armor);
         }
         env->DeleteLocalRef(inv);
     }

@@ -55,7 +55,11 @@ float GetForwardImpulse();
 float GetLeftImpulse();
 bool IsKeySneakDown();
 bool IsKeyAttackDown();
+bool IsKeyUseDown();
 bool GetHotbarItemName(int slot, std::string& out);
+bool GetInventoryItemName(int slot, std::string& out);
+bool GetArmorItemName(int armorIndex, std::string& out);
+bool InventoryQuickMove(int containerId, int slotId);
 
 }  // namespace mc
 }  // namespace summer

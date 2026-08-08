@@ -144,10 +144,38 @@ void DrawCategory(Client& c, Category cat) {
 
 void ApplyTheme() {
     ImGuiIO& io = ImGui::GetIO();
-    g_font = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\tahomabd.ttf", 14.f);
-    g_titleFont =
-        io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\tahomabd.ttf", 20.f);
+
+    // Load a font that covers Cyrillic (player names on RU servers) and fall
+    // back through common system fonts. The default ProggyClean has no
+    // non-ASCII glyphs, which is what showed as "g gg g" garbage.
+    static const char* kFontCandidates[] = {
+        "C:\\Windows\\Fonts\\tahomabd.ttf",
+        "C:\\Windows\\Fonts\\tahoma.ttf",
+        "C:\\Windows\\Fonts\\arialbd.ttf",
+        "C:\\Windows\\Fonts\\arial.ttf",
+        "C:\\Windows\\Fonts\\segoeuib.ttf",
+        "C:\\Windows\\Fonts\\segoeui.ttf",
+        "C:\\Windows\\Fonts\\msyhbd.ttc",
+        "C:\\Windows\\Fonts\\consolab.ttf",
+    };
+    const ImWchar* ranges = io.Fonts->GetGlyphRangesCyrillic();
+    g_font = nullptr;
+    g_titleFont = nullptr;
+    for (const char* path : kFontCandidates) {
+        if (!g_font) {
+            ImFontConfig cfg;
+            cfg.GlyphRanges = ranges;
+            g_font = io.Fonts->AddFontFromFileTTF(path, 14.f, &cfg);
+        }
+        if (!g_titleFont) {
+            ImFontConfig cfg;
+            cfg.GlyphRanges = ranges;
+            g_titleFont = io.Fonts->AddFontFromFileTTF(path, 20.f, &cfg);
+        }
+        if (g_font && g_titleFont) break;
+    }
     if (!g_font) g_font = io.Fonts->AddFontDefault();
+    if (!g_titleFont) g_titleFont = g_font;
     io.FontDefault = g_font;
 
     ImGuiStyle& s = ImGui::GetStyle();
