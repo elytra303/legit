@@ -170,7 +170,7 @@ void ApplyTheme() {
     Log("[GUI] fonts: regular=%p title=%p verdana=%u bytes", (void*)g_font,
         (void*)g_titleFont, (unsigned)sizeof(gui::kFontVerdana));
     Log("[GUI] atlas build=%d texture=%dx%d", built ? 1 : 0,
-        (int)io.Fonts->TexWidth, (int)io.Fonts->TexHeight);
+        (int)io.Fonts->TexPixelsWidth, (int)io.Fonts->TexPixelsHeight);
     GLint maxTex = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
     Log("[GUI] GL_MAX_TEXTURE_SIZE=%d", (int)maxTex);
