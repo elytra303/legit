@@ -1,4 +1,5 @@
 #include "gui.h"
+#include "font_data.h"
 
 #include <windows.h>
 
@@ -145,36 +146,19 @@ void DrawCategory(Client& c, Category cat) {
 void ApplyTheme() {
     ImGuiIO& io = ImGui::GetIO();
 
-    // Load a font that covers Cyrillic (player names on RU servers) and fall
-    // back through common system fonts. The default ProggyClean has no
-    // non-ASCII glyphs, which is what showed as "g gg g" garbage.
-    static const char* kFontCandidates[] = {
-        "C:\\Windows\\Fonts\\tahomabd.ttf",
-        "C:\\Windows\\Fonts\\tahoma.ttf",
-        "C:\\Windows\\Fonts\\arialbd.ttf",
-        "C:\\Windows\\Fonts\\arial.ttf",
-        "C:\\Windows\\Fonts\\segoeuib.ttf",
-        "C:\\Windows\\Fonts\\segoeui.ttf",
-        "C:\\Windows\\Fonts\\msyhbd.ttc",
-        "C:\\Windows\\Fonts\\consolab.ttf",
-    };
+    // Use the Verdana TTF embedded in font_data.h so glyph coverage
+    // (incl. Cyrillic for RU player names) does not depend on the fonts
+    // installed on the target machine. The static array outlives ImGui.
     const ImWchar* ranges = io.Fonts->GetGlyphRangesCyrillic();
-    g_font = nullptr;
-    g_titleFont = nullptr;
-    for (const char* path : kFontCandidates) {
-        if (!g_font) {
-            ImFontConfig cfg;
-            cfg.GlyphRanges = ranges;
-            g_font = io.Fonts->AddFontFromFileTTF(path, 14.f, &cfg);
-        }
-        if (!g_titleFont) {
-            ImFontConfig cfg;
-            cfg.GlyphRanges = ranges;
-            g_titleFont = io.Fonts->AddFontFromFileTTF(path, 20.f, &cfg);
-        }
-        if (g_font && g_titleFont) break;
-    }
+    ImFontConfig cfg;
+    cfg.FontDataOwnedByAtlas = false;
+    cfg.GlyphRanges = ranges;
+    g_font = io.Fonts->AddFontFromMemoryTTF(
+        (void*)gui::kFontVerdana, (int)sizeof(gui::kFontVerdana), 14.f, &cfg);
     if (!g_font) g_font = io.Fonts->AddFontDefault();
+    cfg.GlyphRanges = ranges;
+    g_titleFont = io.Fonts->AddFontFromMemoryTTF(
+        (void*)gui::kFontVerdana, (int)sizeof(gui::kFontVerdana), 20.f, &cfg);
     if (!g_titleFont) g_titleFont = g_font;
     io.FontDefault = g_font;
 
