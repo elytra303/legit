@@ -102,12 +102,54 @@ static jclass LoadClassImpl(JNIEnv* env, const std::string& slashed) {
     return c;
 }
 
+// The swap-hook thread often has no (or a wrong) context class loader, so
+// JNI FindClass cannot see the game classes. Enumerating loaded classes via
+// JVMTI finds them regardless of thread or class loader.
+static jclass LoadClassViaJvmti(JNIEnv* env, const char* binName) {
+    if (!JVM::jvmti) return nullptr;
+    jint count = 0;
+    jclass* classes = nullptr;
+    if (JVM::jvmti->GetLoadedClasses(&count, &classes) != JVMTI_ERROR_NONE ||
+        count <= 0) {
+        return nullptr;
+    }
+    std::string target(binName);
+    jclass found = nullptr;
+    for (jint i = 0; i < count && !found; ++i) {
+        if (!classes[i]) continue;
+        char* sig = nullptr;
+        if (JVM::jvmti->GetClassSignature(classes[i], &sig, nullptr) !=
+                JVMTI_ERROR_NONE ||
+            !sig) {
+            continue;
+        }
+        std::string s(sig);
+        JVM::jvmti->Deallocate((unsigned char*)sig);
+        if (s.size() >= 2 && s[0] == 'L' && s.back() == ';')
+            s = s.substr(1, s.size() - 2);
+        else
+            continue;
+        if (s == target) found = classes[i];
+    }
+    if (classes) JVM::jvmti->Deallocate((unsigned char*)classes);
+    if (!found) return nullptr;
+    return (jclass)env->NewGlobalRef(found);
+}
+
 jclass JVM::FindClass(const char* binName) {
     JNIEnv* env = Env();
     if (!env) return nullptr;
     auto it = g_classCache.find(binName);
     if (it != g_classCache.end()) return it->second;
     jclass local = LoadClassImpl(env, binName);
+    if (!local) {
+        local = LoadClassViaJvmti(env, binName);
+        if (local) {
+            Log("[Summer] resolved class %s via JVMTI", binName);
+            g_classCache[binName] = local;
+            return local;
+        }
+    }
     if (!local) return nullptr;
     jclass global = (jclass)env->NewGlobalRef(local);
     env->DeleteLocalRef(local);
