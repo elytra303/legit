@@ -167,10 +167,12 @@ void ApplyTheme() {
     // Force the atlas build now (normally lazy) so failures surface in the
     // log instead of silently producing a garbage texture.
     bool built = io.Fonts->Build();
+    int tw = 0, th = 0;
+    unsigned char* tpixels = nullptr;
+    io.Fonts->GetTexDataAsRGBA32(&tpixels, &tw, &th);
     Log("[GUI] fonts: regular=%p title=%p verdana=%u bytes", (void*)g_font,
         (void*)g_titleFont, (unsigned)sizeof(gui::kFontVerdana));
-    Log("[GUI] atlas build=%d texture=%dx%d", built ? 1 : 0,
-        (int)io.Fonts->TexPixelsWidth, (int)io.Fonts->TexPixelsHeight);
+    Log("[GUI] atlas build=%d texture=%dx%d", built ? 1 : 0, tw, th);
     GLint maxTex = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
     Log("[GUI] GL_MAX_TEXTURE_SIZE=%d", (int)maxTex);
