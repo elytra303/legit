@@ -289,7 +289,8 @@ bool EnsureResolved() {
         JVM::FindFirstClass({"net/minecraft/world/inventory/AbstractContainerMenu"});
 
     if (!ids.mcCls || !ids.entityCls || !ids.playerCls) {
-        LogWarn("[Summer] failed to resolve core classes (game not loaded yet?)");
+        LogWarn("[Summer] failed to resolve core classes (mc=%d entity=%d player=%d)",
+                ids.mcCls != nullptr, ids.entityCls != nullptr, ids.playerCls != nullptr);
         ids.tried = false;  // allow retry
         return false;
     }

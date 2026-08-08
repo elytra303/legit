@@ -63,6 +63,32 @@ std::string JVM::ClassSig(jclass cls) {
     return n.empty() ? "" : "L" + n + ";";
 }
 
+static std::string GetExceptionMsg(JNIEnv* env) {
+    if (!env) return "";
+    jthrowable ex = env->ExceptionOccurred();
+    if (!ex) return "";
+    env->ExceptionClear();
+    jclass exCls = env->GetObjectClass(ex);
+    std::string name = JVM::GetClassName(exCls);
+    jclass thrCls = env->FindClass("java/lang/Throwable");
+    jmethodID gm =
+        thrCls ? env->GetMethodID(thrCls, "getMessage", "()Ljava/lang/String;") : nullptr;
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    std::string msg;
+    if (gm) {
+        jstring s = (jstring)env->CallObjectMethod(ex, gm);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        const char* utf = s ? env->GetStringUTFChars(s, nullptr) : nullptr;
+        if (utf) {
+            msg = utf;
+            env->ReleaseStringUTFChars(s, utf);
+        }
+        if (s) env->DeleteLocalRef(s);
+    }
+    env->DeleteLocalRef(ex);
+    return name + (msg.empty() ? "" : ": " + msg);
+}
+
 static jclass LoadWithLoader(JNIEnv* env, jobject loader, const std::string& dotted) {
     if (!env || !loader) return nullptr;
     jclass clCls = env->FindClass("java/lang/ClassLoader");
@@ -82,7 +108,11 @@ static jclass LoadWithLoader(JNIEnv* env, jobject loader, const std::string& dot
         return nullptr;
     }
     jclass c = (jclass)env->CallObjectMethod(loader, loadClass, name);
-    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (env->ExceptionCheck()) {
+        LogWarn("[Summer] loadClass('%s') failed: %s", dotted.c_str(),
+                GetExceptionMsg(env).c_str());
+        return nullptr;
+    }
     return c;
 }
 
@@ -151,6 +181,10 @@ jobject JVM::GameLoader(JNIEnv* env) {
             }
         }
         if (!found && strstr(name, "Render")) found = threads[i];
+        if (found) {
+            std::string matched(info.name ? info.name : "");
+            Log("[Summer] loader lookup matched thread '%s'", matched.c_str());
+        }
         if (info.name) jvmti->Deallocate((unsigned char*)info.name);
     }
     if (threads) jvmti->Deallocate((unsigned char*)threads);
@@ -163,6 +197,8 @@ jobject JVM::GameLoader(JNIEnv* env) {
             if (info.context_class_loader) {
                 loader = env->NewGlobalRef(info.context_class_loader);
                 env->DeleteLocalRef(info.context_class_loader);
+            } else {
+                LogWarn("[Summer] matched thread has no context class loader");
             }
             if (info.name) jvmti->Deallocate((unsigned char*)info.name);
         }
