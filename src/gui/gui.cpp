@@ -581,9 +581,10 @@ void WarmFonts() {
         }
         if (!s_logged) {
             int tw = 0, th = 0;
-            if (baked->ContainerAtlas && baked->ContainerAtlas->TexData) {
-                tw = baked->ContainerAtlas->TexData->Width;
-                th = baked->ContainerAtlas->TexData->Height;
+            ImFontAtlas* atlas = f->ContainerAtlas;
+            if (atlas && atlas->TexData) {
+                tw = atlas->TexData->Width;
+                th = atlas->TexData->Height;
             }
             Log("[GUI] WarmFonts %s size=%.0f glyphs=%d/%d atlas=%dx%d",
                 f->GetDebugName(), f->LegacySize, loaded, total, tw, th);
