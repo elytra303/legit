@@ -108,8 +108,9 @@ void Overlay::OnSwap() {
         imguiReady_ = true;
     }
 
-    // INSERT toggles the menu
-    bool insert = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
+    // the configured menu key toggles the menu (INSERT by default)
+    int menuKey = g_config.GetInt("client.menuKey", VK_INSERT);
+    bool insert = menuKey > 0 && (GetAsyncKeyState(menuKey) & 0x8000) != 0;
     if (insert && !insertPrev_) {
         Client& c = Client::Instance();
         c.SetMenuOpen(!c.MenuOpen());

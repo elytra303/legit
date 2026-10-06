@@ -8,22 +8,13 @@ patching. The overlay is drawn from a `glfwSwapBuffers` detour with Dear ImGui.
 
 ## Features
 
-- **Menu** — CS:GO-style window, toggle with `INSERT`, keybind any module.
-- **Hitbox** — aims at the real entity hitbox:
-  - *Normal*: smooth stick aim (FOV, range, random hit points).
-  - *Legit*: snap to the hitbox, fire, then return the camera to where it was
-    with randomized error and a post-hit delay. Head/chest/feet bias.
-- **TriggerBot** — raycasts the crosshair against real hitboxes and attacks
-  with random scan/fire delays.
-- **AutoSwap** — scores hotbar weapons (sword > mace > axe > trident, then
-  material) and swaps while fighting, with optional switch-back.
-- **ESP** — 2D box, 3D hitbox, health bar, name, distance, tracers. Player / mob /
-  invisible filters, color-coded teams.
-- **Removals** — fullbright, no hurt-cam, no fire overlay, no view bobbing.
-- **AutoSprint** — sprints while moving forward (stops while sneaking, food check,
-  randomized engage delay).
-- **ScreenWalk** — keeps movement keys applied while a GUI screen (inventory, chat)
-  is open.
+- **Menu** — dark styled click GUI, toggle with `INSERT` (rebindable), search
+  and keybind every entry.
+- **Watermark** — client name + fps in the top-left corner, can be disabled.
+- **Config** — save/load from the menu, class mapping dump for obfuscated
+  names.
+
+Modules (combat / visual / movement) are not in the build right now.
 
 ## Building
 
@@ -35,8 +26,8 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
 ```
 
-JNI headers are taken from `JAVA_HOME`. Dependencies (Dear ImGui, MinHook) are
-fetched by CMake.
+JNI headers are taken from `JAVA_HOME`. Dear ImGui is vendored in
+`third_party/imgui` (v1.92.0), MinHook is fetched by CMake.
 
 ## Loading
 
@@ -62,10 +53,10 @@ java -agentpath:path\to\summer_client.dll -jar minecraft.jar
 
 ```
 src/main.cpp            JVMTI agent entry + glfwSwapBuffers detour
-src/summer/             client core, config, JVM/JVMTI helpers, module registry
+src/summer/             client core, config, JVM/JVMTI helpers, module base
 src/mc/                 Minecraft bindings (JNI reflection layer)
-src/gui/                Dear ImGui menu
+src/gui/                Dear ImGui click GUI
 src/overlay/            swap-hook render pass
-src/modules/            combat / visual / movement modules
 src/math/ src/util/     math + helpers
+third_party/imgui/      Dear ImGui v1.92.0 (vendored)
 ```
