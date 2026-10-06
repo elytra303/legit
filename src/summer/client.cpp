@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include "mc/minecraft.h"
+#include "registry.h"
 #include "util/log.h"
 #include "util/timer.h"
 
@@ -17,6 +18,7 @@ void Client::AddModule(Module* m) { modules_.push_back(m); }
 
 void Client::Initialize() {
     Log("[Summer] initializing client");
+    RegisterAllModules(*this);
     LoadConfig();
     for (auto* m : modules_) {
         m->Load(g_config);

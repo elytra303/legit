@@ -50,6 +50,7 @@ struct Ids {
     jmethodID e_getEyeHeight = nullptr, e_getEyePosition = nullptr;
     jmethodID e_setFireTicks = nullptr;
     jfieldID e_fireTicks = nullptr;
+    jmethodID e_getBbW = nullptr, e_getBbH = nullptr;
 
     jmethodID l_getHealth = nullptr, l_getMaxHealth = nullptr;
     jmethodID l_getHurtTime = nullptr;
@@ -405,6 +406,12 @@ bool EnsureResolved() {
                                          {"setRemainingFireTicks", "setFireTicks"});
     ids.e_fireTicks = JVM::FindField("Entity.remainingFireTicks", ids.entityCls, "I",
                                      {"remainingFireTicks", "fireTicks"});
+    ids.e_getBbW = JVM::FindMethod("Entity.getBoundingBoxWidth", ids.entityCls, "()F",
+                                   false, {"getBbWidth", "bbWidth"});
+    ids.e_getBbH = JVM::FindMethod("Entity.getBoundingBoxHeight", ids.entityCls, "()F",
+                                   false, {"getBbHeight", "bbHeight"});
+    if (!ids.e_getBbW || !ids.e_getBbH)
+        LogWarn("[Summer] Entity bbox size methods missing, hitbox expand disabled");
 
     // ---- LivingEntity ----
     ids.l_getHealth = JVM::FindMethod("LivingEntity.getHealth", ids.livingCls, "()F",
@@ -793,6 +800,50 @@ WorldSnapshot Capture() {
 
     // viewport will be filled by overlay
     return s;
+}
+
+// ---------------------------------------------------------------------------
+
+bool ExpandEntityBox(jobject entity, float growXZ, float growY) {
+    JNIEnv* env = JVM::Env();
+    if (!env || !ids.ok || !entity) return false;
+    if (!ids.e_getBoundingBox || !ids.aabbCls || !ids.e_getBbW || !ids.e_getBbH)
+        return false;
+
+    float w = env->CallFloatMethod(entity, ids.e_getBbW);
+    if (env->ExceptionCheck() || w <= 0.f) {
+        env->ExceptionClear();
+        return false;
+    }
+    float h = env->CallFloatMethod(entity, ids.e_getBbH);
+    if (env->ExceptionCheck() || h <= 0.f) {
+        env->ExceptionClear();
+        return false;
+    }
+
+    // natural box from the entity's feet position + dimensions, then expand.
+    // values are recomputed every frame so they never accumulate.
+    Vec3 p = EntityPosition(env, entity);
+    double hx = w * 0.5 + growXZ;
+    double minX = p.x - hx, maxX = p.x + hx;
+    double minY = p.y - growY, maxY = p.y + h + growY;
+    double minZ = p.z - hx, maxZ = p.z + hx;
+
+    // getBoundingBox() hands back the entity's own AABB object, so writing the
+    // six fields in place changes the box the client uses for raycasts.
+    jobject bb = env->CallObjectMethod(entity, ids.e_getBoundingBox);
+    if (env->ExceptionCheck() || !bb) {
+        env->ExceptionClear();
+        return false;
+    }
+    env->SetDoubleField(bb, ids.a_minX, minX);
+    env->SetDoubleField(bb, ids.a_minY, minY);
+    env->SetDoubleField(bb, ids.a_minZ, minZ);
+    env->SetDoubleField(bb, ids.a_maxX, maxX);
+    env->SetDoubleField(bb, ids.a_maxY, maxY);
+    env->SetDoubleField(bb, ids.a_maxZ, maxZ);
+    env->DeleteLocalRef(bb);
+    return true;
 }
 
 // ---------------------------------------------------------------------------

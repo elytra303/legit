@@ -8,13 +8,18 @@ patching. The overlay is drawn from a `glfwSwapBuffers` detour with Dear ImGui.
 
 ## Features
 
-- **Menu** — dark styled click GUI, toggle with `INSERT` (rebindable), search
-  and keybind every entry.
+- **Menu** — dark styled click GUI with animations, toggle with `INSERT`
+  (rebindable), search and keybind every entry.
 - **Watermark** — client name + fps in the top-left corner, can be disabled.
 - **Config** — save/load from the menu, class mapping dump for obfuscated
   names.
 
-Modules (combat / visual / movement) are not in the build right now.
+Modules:
+
+- **HitBox** (COMBAT) — enlarges entity hitboxes client side so the crosshair
+  has more room to connect. Expand amount is configurable; "reach only",
+  "crosshair only" and "jitter" keep the boxes inside what vanilla servers
+  already accept.
 
 ## Building
 

@@ -57,6 +57,11 @@ float GetLeftImpulse();
 bool IsKeySneakDown();
 bool IsKeyAttackDown();
 bool IsKeyUseDown();
+
+// Recompute the entity's natural AABB from its position + dimensions and write
+// back an expanded one (client-side only). Safe to call every frame - values
+// never accumulate. Returns false when the entity ids are not resolved yet.
+bool ExpandEntityBox(jobject entity, float growXZ, float growY);
 bool GetHotbarItemName(int slot, std::string& out);
 bool GetInventoryItemName(int slot, std::string& out);
 bool GetArmorItemName(int armorIndex, std::string& out);

@@ -28,6 +28,8 @@ set(SUMMER_SOURCES
     src/summer/config.cpp
     src/summer/jvm.cpp
     src/summer/module.cpp
+    src/summer/registry.cpp
+    src/modules/combat/hitbox.cpp
     src/gui/gui.cpp
     src/overlay/overlay.cpp
     src/util/log.cpp
