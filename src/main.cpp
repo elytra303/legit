@@ -15,6 +15,7 @@
 #include <MinHook.h>
 
 #include "overlay/overlay.h"
+#include "mc/minecraft.h"
 #include "summer/client.h"
 #include "summer/jvm.h"
 #include "util/log.h"
@@ -90,6 +91,8 @@ extern "C" __declspec(dllexport) jint JNICALL Agent_OnLoad(JavaVM* vm, char* opt
         LogWarn("[Summer] JVMTI env unavailable (%d), some tools will not work",
                 (int)r);
     JVM::Init(vm, jvmti);
+
+    mc::InstallJvmtiHooks();
 
     Client& c = Client::Instance();
     c.Initialize();

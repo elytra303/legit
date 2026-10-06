@@ -5,6 +5,8 @@
 #include "../summer/jvm.h"
 #include "../util/log.h"
 
+#include <atomic>
+#include <cstring>
 #include <chrono>
 #include <string>
 #include <utility>
@@ -51,6 +53,8 @@ struct Ids {
     jmethodID e_setFireTicks = nullptr;
     jfieldID e_fireTicks = nullptr;
     jmethodID e_getBbW = nullptr, e_getBbH = nullptr;
+    jfieldID e_bb = nullptr;
+    jmethodID e_setBoundingBox = nullptr;
 
     jmethodID l_getHealth = nullptr, l_getMaxHealth = nullptr;
     jmethodID l_getHurtTime = nullptr;
@@ -407,11 +411,21 @@ bool EnsureResolved() {
     ids.e_fireTicks = JVM::FindField("Entity.remainingFireTicks", ids.entityCls, "I",
                                      {"remainingFireTicks", "fireTicks"});
     ids.e_getBbW = JVM::FindMethod("Entity.getBoundingBoxWidth", ids.entityCls, "()F",
-                                   false, {"getBbWidth", "bbWidth"});
-    ids.e_getBbH = JVM::FindMethod("Entity.getBoundingBoxHeight", ids.entityCls, "()F",
-                                   false, {"getBbHeight", "bbHeight"});
+                                   false,
+                                   {"getBbWidth", "bbWidth", "getBoundingBoxWidth"});
+    ids.e_getBbH = JVM::FindMethod("Entity.getBoundingBoxHeight", ids.entityCls,
+                                    "()F", false,
+                                    {"getBbHeight", "bbHeight", "getBoundingBoxHeight"});
+    ids.e_bb = JVM::FindField("Entity.bb", ids.entityCls, aabbSig.c_str(),
+                              {"bb", "boundingBox"});
+    ids.e_setBoundingBox = JVM::FindMethod(
+        "Entity.setBoundingBox", ids.entityCls, ("(L" + aabbSig + ")V").c_str(),
+        false, {"setBoundingBox"});
     if (!ids.e_getBbW || !ids.e_getBbH)
-        LogWarn("[Summer] Entity bbox size methods missing, hitbox expand disabled");
+        LogWarn("[Summer] Entity bbox size methods missing, expanding existing AABB");
+    if (!ids.e_bb)
+        LogWarn("[Summer] Entity.bb field missing");
+
 
     // ---- LivingEntity ----
     ids.l_getHealth = JVM::FindMethod("LivingEntity.getHealth", ids.livingCls, "()F",
@@ -605,6 +619,7 @@ bool EnsureResolved() {
                 "fill map.* overrides");
     } else {
         Log("[Summer] Minecraft layer resolved (ok)");
+        SyncHitboxEvent();
     }
     return ids.ok;
 }
@@ -802,48 +817,160 @@ WorldSnapshot Capture() {
     return s;
 }
 
-// ---------------------------------------------------------------------------
+// -----------------------------------------------------------// Expand an existing AABB in place around its XZ center.
+static bool ExpandAABBInPlace(JNIEnv* env, jobject aabb, double gx, double gy) {
+    if (!env || !aabb || !ids.a_minX || !ids.a_maxX || !ids.a_minY ||
+        !ids.a_maxY || !ids.a_minZ || !ids.a_maxZ)
+        return false;
+    double minX = env->GetDoubleField(aabb, ids.a_minX);
+    double minY = env->GetDoubleField(aabb, ids.a_minY);
+    double minZ = env->GetDoubleField(aabb, ids.a_minZ);
+    double maxX = env->GetDoubleField(aabb, ids.a_maxX);
+    double maxY = env->GetDoubleField(aabb, ids.a_maxY);
+    double maxZ = env->GetDoubleField(aabb, ids.a_maxZ);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return false;
+    }
+    // ignore garbage / inverted boxes
+    if (!(maxX > minX) || !(maxY > minY) || !(maxZ > minZ)) return false;
+    double cx = (minX + maxX) * 0.5;
+    double cz = (minZ + maxZ) * 0.5;
+    double hx = (maxX - minX) * 0.5 + gx;
+    double hz = (maxZ - minZ) * 0.5 + gx;
+    env->SetDoubleField(aabb, ids.a_minX, cx - hx);
+    env->SetDoubleField(aabb, ids.a_maxX, cx + hx);
+    env->SetDoubleField(aabb, ids.a_minY, minY - gy);
+    env->SetDoubleField(aabb, ids.a_maxY, maxY + gy);
+    env->SetDoubleField(aabb, ids.a_minZ, cz - hz);
+    env->SetDoubleField(aabb, ids.a_maxZ, cz + hz);
+    return !env->ExceptionCheck() ? true : (env->ExceptionClear(), false);
+}
 
 bool ExpandEntityBox(jobject entity, float growXZ, float growY) {
     JNIEnv* env = JVM::Env();
     if (!env || !ids.ok || !entity) return false;
-    if (!ids.e_getBoundingBox || !ids.aabbCls || !ids.e_getBbW || !ids.e_getBbH)
-        return false;
+    if (!ids.a_minX) return false;
 
-    float w = env->CallFloatMethod(entity, ids.e_getBbW);
-    if (env->ExceptionCheck() || w <= 0.f) {
-        env->ExceptionClear();
-        return false;
+    // Preferred path: mutate the live AABB object (getBoundingBox() returns
+    // this.bb in Mojmap, so writing in place changes what raycasts see).
+    jobject bb = nullptr;
+    if (ids.e_getBoundingBox) {
+        bb = env->CallObjectMethod(entity, ids.e_getBoundingBox);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            bb = nullptr;
+        }
     }
-    float h = env->CallFloatMethod(entity, ids.e_getBbH);
-    if (env->ExceptionCheck() || h <= 0.f) {
-        env->ExceptionClear();
-        return false;
+    if (!bb && ids.e_bb) {
+        bb = env->GetObjectField(entity, ids.e_bb);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            bb = nullptr;
+        }
     }
+    if (!bb) return false;
 
-    // natural box from the entity's feet position + dimensions, then expand.
-    // values are recomputed every frame so they never accumulate.
-    Vec3 p = EntityPosition(env, entity);
-    double hx = w * 0.5 + growXZ;
-    double minX = p.x - hx, maxX = p.x + hx;
-    double minY = p.y - growY, maxY = p.y + h + growY;
-    double minZ = p.z - hx, maxZ = p.z + hx;
+    bool ok = ExpandAABBInPlace(env, bb, (double)growXZ, (double)growY);
 
-    // getBoundingBox() hands back the entity's own AABB object, so writing the
-    // six fields in place changes the box the client uses for raycasts.
-    jobject bb = env->CallObjectMethod(entity, ids.e_getBoundingBox);
-    if (env->ExceptionCheck() || !bb) {
-        env->ExceptionClear();
-        return false;
+    // Also push through setBoundingBox so the game stores our box even if
+    // getBoundingBox returned a temporary copy.
+    if (ok && ids.e_setBoundingBox) {
+        env->CallVoidMethod(entity, ids.e_setBoundingBox, bb);
+        if (env->ExceptionCheck()) env->ExceptionClear();
     }
-    env->SetDoubleField(bb, ids.a_minX, minX);
-    env->SetDoubleField(bb, ids.a_minY, minY);
-    env->SetDoubleField(bb, ids.a_minZ, minZ);
-    env->SetDoubleField(bb, ids.a_maxX, maxX);
-    env->SetDoubleField(bb, ids.a_maxY, maxY);
-    env->SetDoubleField(bb, ids.a_maxZ, maxZ);
     env->DeleteLocalRef(bb);
-    return true;
+    return ok;
+}
+
+// --- JVMTI MethodExit hook on Entity.getBoundingBox -------------------------
+// Expanding once per frame from the render hook is too late: the game tick
+// resets AABBs and then processes attacks. Hooking getBoundingBox makes every
+// raycast/attack see the expanded box at read time.
+
+namespace {
+std::atomic<bool> g_hitboxHook{false};
+std::atomic<float> g_hitboxGx{0.25f};
+std::atomic<float> g_hitboxGy{0.1f};
+jmethodID g_bbExitMethod = nullptr;  // Entity.getBoundingBox
+}  // namespace
+
+static void JNICALL SummerMethodExit(jvmtiEnv* jvmti, JNIEnv* jni,
+                                     jthread thread, jmethodID method,
+                                     jboolean was_popped, jvalue ret) {
+    if (!g_hitboxHook.load(std::memory_order_relaxed)) return;
+    if (was_popped || !ret.l) return;
+    if (!ids.a_minX) return;
+    if (!g_bbExitMethod) {
+        if (!ids.ok || !ids.e_getBoundingBox) return;
+        g_bbExitMethod = ids.e_getBoundingBox;
+    }
+    if (method != g_bbExitMethod) return;
+
+    if (!jni->PushLocalFrame(8)) {
+        jobject self = nullptr;
+        jvmtiError je = jvmti->GetLocalObject(thread, 0, 0, &self);
+        bool skip = false;
+        if (je == JVMTI_ERROR_NONE && self) {
+            jobject local = GetPlayer(jni);
+            if (local && jni->IsSameObject(self, local) == JNI_TRUE)
+                skip = true;
+            if (local) jni->DeleteLocalRef(local);
+            if (!skip && ids.livingCls &&
+                jni->IsInstanceOf(self, ids.livingCls) != JNI_TRUE &&
+                ids.playerCls &&
+                jni->IsInstanceOf(self, ids.playerCls) != JNI_TRUE)
+                skip = true;
+            jni->DeleteLocalRef(self);
+        }
+        // If locals are unavailable (JIT), still expand - combat wants it.
+        if (!skip)
+            ExpandAABBInPlace(jni, (jobject)ret.l, (double)g_hitboxGx.load(),
+                              (double)g_hitboxGy.load());
+        jni->PopLocalFrame(nullptr);
+    } else {
+        jni->ExceptionClear();
+    }
+}
+
+void InstallJvmtiHooks() {
+    if (!JVM::jvmti) {
+        LogWarn("[Summer] jvmti null, hitbox read-hook unavailable");
+        return;
+    }
+    jvmtiEventCallbacks cb;
+    memset(&cb, 0, sizeof(cb));
+    cb.MethodExit = &SummerMethodExit;
+    if (JVM::jvmti->SetEventCallbacks(&cb, sizeof(cb)) != JVMTI_ERROR_NONE) {
+        LogWarn("[Summer] SetEventCallbacks failed");
+        return;
+    }
+    Log("[Summer] jvmti MethodExit callback installed");
+}
+
+void SetHitboxHook(bool on, float gx, float gy) {
+    g_hitboxGx.store(gx);
+    g_hitboxGy.store(gy);
+    g_hitboxHook.store(on);
+    SyncHitboxEvent();
+}
+
+void SyncHitboxEvent() {
+    if (!JVM::jvmti) return;
+    bool want = g_hitboxHook.load() && ids.ok && ids.e_getBoundingBox != nullptr;
+    if (want) g_bbExitMethod = ids.e_getBoundingBox;
+    static bool s_armed = false;
+    if (want == s_armed) return;
+    jint r = JVM::jvmti->SetEventNotificationMode(
+        want ? JVMTI_ENABLE : JVMTI_DISABLE, JVMTI_EVENT_METHOD_EXIT, nullptr);
+    s_armed = want;
+    Log("[Summer] hitbox getBoundingBox hook %s (jvmti=%d, method=%p)",
+        want ? "ON" : "OFF", (int)r, (void*)g_bbExitMethod);
+}
+
+void UpdateHitboxHookGrow(float gx, float gy) {
+    g_hitboxGx.store(gx);
+    g_hitboxGy.store(gy);
 }
 
 // ---------------------------------------------------------------------------

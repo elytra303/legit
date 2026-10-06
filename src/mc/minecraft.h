@@ -62,6 +62,14 @@ bool IsKeyUseDown();
 // back an expanded one (client-side only). Safe to call every frame - values
 // never accumulate. Returns false when the entity ids are not resolved yet.
 bool ExpandEntityBox(jobject entity, float growXZ, float growY);
+
+// JVMTI read-hook: expand Entity.getBoundingBox() results so combat raycasts
+// see the enlarged box (render-time writes are too late - tick resets AABBs).
+void InstallJvmtiHooks();
+void SetHitboxHook(bool on, float gx, float gy);
+void SyncHitboxEvent();  // arm/disarm JVMTI event once mappings resolve
+void UpdateHitboxHookGrow(float gx, float gy);
+
 bool GetHotbarItemName(int slot, std::string& out);
 bool GetInventoryItemName(int slot, std::string& out);
 bool GetArmorItemName(int armorIndex, std::string& out);
