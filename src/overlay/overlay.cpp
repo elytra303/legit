@@ -113,7 +113,9 @@ void Overlay::OnSwap() {
     bool insert = menuKey > 0 && (GetAsyncKeyState(menuKey) & 0x8000) != 0;
     if (insert && !insertPrev_) {
         Client& c = Client::Instance();
-        c.SetMenuOpen(!c.MenuOpen());
+        bool open = !c.MenuOpen();
+        c.SetMenuOpen(open);
+        if (!open) gui::OnMenuClosed();
         c.SaveConfig();
     }
     insertPrev_ = insert ? 1 : 0;

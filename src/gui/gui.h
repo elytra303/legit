@@ -8,6 +8,7 @@ namespace gui {
 void ApplyTheme();
 void DrawMainMenu();
 void DrawWatermark();
+void OnMenuClosed();  // reset entry animations
 ImDrawList* WorldDrawList();
 
 bool Checkbox(const char* label, bool* v);

@@ -3,9 +3,12 @@
 
 #include <windows.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <cfloat>
+#include <unordered_map>
 
 #include <GL/gl.h>
 
@@ -42,6 +45,13 @@ const ImU32 kUText = IM_COL32(232, 236, 243, 255);
 const ImU32 kUDim = IM_COL32(139, 149, 167, 255);
 const ImU32 kUMuted = IM_COL32(96, 104, 120, 255);
 
+// Baked font sizes. ImGui 1.92 rasterizes text at the exact size it is drawn
+// at, so draw every string at its font's LegacySize to stay crisp.
+const float kSizeSmall = 13.f;
+const float kSizeBase = 15.f;
+const float kSizeHead = 17.f;
+const float kSizeTitle = 21.f;
+
 ImFont* g_titleFont = nullptr;
 ImFont* g_font = nullptr;
 ImFont* g_smallFont = nullptr;
@@ -50,10 +60,38 @@ int g_tab = 0;
 int* g_captureTarget = nullptr;
 char g_search[64] = {0};
 
+float g_menuAnim = 0.f;  // 0..1 menu open progress
+
 const char* kTabs[] = {"COMBAT", "VISUALS", "MOVEMENT", "SETTINGS"};
 
 const float kHeadH = 64.f;
 const float kSideW = 176.f;
+
+// Exponential smoothing toward `target`. `speed` is the response rate
+// (higher = snappier). Values snap to target once close enough.
+float AnimF(ImU32 id, float target, float speed) {
+    static std::unordered_map<ImU32, float> vals;
+    float dt = ImGui::GetIO().DeltaTime;
+    if (dt <= 0.f || dt > 0.5f) dt = 1.f / 60.f;
+    float& v = vals[id];
+    float k = 1.f - std::exp(-speed * dt);
+    v += (target - v) * k;
+    if (std::fabs(v - target) < 0.002f) v = target;
+    return v;
+}
+
+ImU32 LerpCol(ImU32 a, ImU32 b, float t) {
+    t = std::clamp(t, 0.f, 1.f);
+    int ar = (int)((a >> 0) & 0xFF), ag = (int)((a >> 8) & 0xFF),
+        ab = (int)((a >> 16) & 0xFF), aa = (int)((a >> 24) & 0xFF);
+    int br = (int)((b >> 0) & 0xFF), bg = (int)((b >> 8) & 0xFF),
+        bb = (int)((b >> 16) & 0xFF), ba = (int)((b >> 24) & 0xFF);
+    int r = (int)(ar + (br - ar) * t);
+    int g = (int)(ag + (bg - ag) * t);
+    int bl = (int)(ab + (bb - ab) * t);
+    int al = (int)(aa + (ba - aa) * t);
+    return IM_COL32(r, g, bl, al);
+}
 
 char LowerC(char c) { return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c; }
 
@@ -87,13 +125,14 @@ void UpdateKeyCapture() {
     }
 }
 
-void DrawMenuShadow(const ImVec2& pos, const ImVec2& size) {
+void DrawMenuShadow(const ImVec2& pos, const ImVec2& size, float alpha) {
+    if (alpha <= 0.01f) return;
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     for (int i = 5; i >= 1; --i) {
         float o = (float)i * 2.5f;
         dl->AddRectFilled(ImVec2(pos.x - o, pos.y - o + o * 0.6f),
                           ImVec2(pos.x + size.x + o, pos.y + size.y + o),
-                          IM_COL32(0, 0, 0, 6 + i * 5), 14.f + o);
+                          IM_COL32(0, 0, 0, (int)((6 + i * 5) * alpha)), 14.f + o);
     }
 }
 
@@ -108,23 +147,23 @@ void DrawHeader() {
     if (g_titleFont) {
         const char* a = "SUMMER";
         const char* b = "CLIENT";
-        dl->AddText(g_titleFont, 21.f, ImVec2(p.x + 34.f, p.y + 13.f), kUText, a);
-        float aw = g_titleFont->CalcTextSizeA(21.f, FLT_MAX, 0.f, a).x;
-        dl->AddText(g_titleFont, 21.f, ImVec2(p.x + 34.f + aw + 8.f, p.y + 13.f),
+        dl->AddText(g_titleFont, kSizeTitle, ImVec2(p.x + 34.f, p.y + 13.f), kUText, a);
+        float aw = g_titleFont->CalcTextSizeA(kSizeTitle, FLT_MAX, 0.f, a).x;
+        dl->AddText(g_titleFont, kSizeTitle, ImVec2(p.x + 34.f + aw + 8.f, p.y + 13.f),
                     kUAccent, b);
         if (g_smallFont)
-            dl->AddText(g_smallFont, 12.5f, ImVec2(p.x + 35.f, p.y + 40.f), kUMuted,
+            dl->AddText(g_smallFont, kSizeSmall, ImVec2(p.x + 35.f, p.y + 40.f), kUMuted,
                         "minecraft 1.21.x   legit edition");
     }
     if (g_smallFont) {
         char hint[40];
         snprintf(hint, sizeof hint, "%s to close",
                  KeyName(g_config.GetInt("client.menuKey", VK_INSERT)));
-        float hw = g_smallFont->CalcTextSizeA(12.5f, FLT_MAX, 0.f, hint).x;
+        float hw = g_smallFont->CalcTextSizeA(kSizeSmall, FLT_MAX, 0.f, hint).x;
         ImVec2 hp(p.x + s.x - hw - 34.f, p.y + 21.f);
         dl->AddRectFilled(hp, ImVec2(hp.x + hw + 20.f, hp.y + 22.f),
                           IM_COL32(255, 255, 255, 12), 6.f);
-        dl->AddText(g_smallFont, 12.5f, ImVec2(hp.x + 10.f, hp.y + 4.f), kUDim, hint);
+        dl->AddText(g_smallFont, kSizeSmall, ImVec2(hp.x + 10.f, hp.y + 4.f), kUDim, hint);
     }
     dl->AddRectFilled(ImVec2(p.x, p.y + kHeadH - 1.f), ImVec2(p.x + s.x, p.y + kHeadH),
                       kUStroke);
@@ -142,24 +181,28 @@ int DrawTabs() {
     float x = p.x + 14.f;
     float w = kSideW - 28.f;
     float h = 40.f;
-    float y = p.y + kHeadH + 20.f;
+    float y0 = p.y + kHeadH + 20.f;
+    float y = y0;
+
+    // sliding pill that follows the selected tab
+    static float s_pillY = -1.f;
+    float targetPillY = y0 + (float)g_tab * (h + 6.f);
+    if (s_pillY < 0.f) s_pillY = targetPillY;
+    s_pillY = AnimF(0x50494C4Cu, targetPillY, 16.f);
+
     for (int i = 0; i < 4; ++i) {
         bool sel = (g_tab == i);
         bool hov = ImGui::IsMouseHoveringRect(ImVec2(x, y), ImVec2(x + w, y + h));
         ImGui::SetCursorScreenPos(ImVec2(x, y));
         ImGui::PushID(i);
-        if (sel)
-            dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h),
-                              IM_COL32(96, 138, 250, 34), 8.f);
-        else if (hov)
+        if (hov && !sel)
             dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h),
                               IM_COL32(255, 255, 255, 10), 8.f);
-        if (sel)
-            dl->AddRectFilled(ImVec2(x + 1.f, y + 9.f), ImVec2(x + 4.f, y + h - 9.f),
-                              kUAccent, 1.5f);
+        float selT = AnimF(0x54414200u + (ImU32)i, sel ? 1.f : 0.f, 18.f);
+        ImU32 col = LerpCol(kUDim, kUAccent, selT);
         if (g_font)
-            dl->AddText(g_font, 15.f, ImVec2(x + 16.f, y + (h - 15.f) * 0.5f),
-                        sel ? kUAccent : (hov ? kUText : kUDim), kTabs[i]);
+            dl->AddText(g_font, kSizeBase, ImVec2(x + 16.f, y + (h - kSizeBase) * 0.5f),
+                        hov && selT < 0.5f ? LerpCol(col, kUText, 0.5f) : col, kTabs[i]);
         ImGui::InvisibleButton("##tab", ImVec2(w, h));
         if (ImGui::IsItemClicked(0) && g_tab != i) {
             g_tab = i;
@@ -168,8 +211,13 @@ int DrawTabs() {
         ImGui::PopID();
         y += h + 6.f;
     }
+    dl->AddRectFilled(ImVec2(x, s_pillY), ImVec2(x + w, s_pillY + h),
+                      IM_COL32(96, 138, 250, 34), 8.f);
+    dl->AddRectFilled(ImVec2(x + 1.f, s_pillY + 9.f), ImVec2(x + 4.f, s_pillY + h - 9.f),
+                      kUAccent, 1.5f);
+
     if (g_smallFont)
-        dl->AddText(g_smallFont, 12.5f, ImVec2(p.x + 16.f, p.y + s.y - 26.f), kUMuted,
+        dl->AddText(g_smallFont, kSizeSmall, ImVec2(p.x + 16.f, p.y + s.y - 26.f), kUMuted,
                     "summer client  v1.0.0");
     return g_tab;
 }
@@ -195,16 +243,16 @@ bool DrawSwitch(const char* id, bool v) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     const float w = 38.f, h = 20.f;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    ImU32 bg;
-    if (v)
-        bg = kUAccent;
-    else if (ImGui::IsMouseHoveringRect(p, ImVec2(p.x + w, p.y + h)))
-        bg = IM_COL32(56, 61, 72, 255);
-    else
-        bg = IM_COL32(44, 48, 58, 255);
+    bool hov = ImGui::IsMouseHoveringRect(p, ImVec2(p.x + w, p.y + h));
+
+    // knob slides between the two ends, bg color fades in with it
+    float t = AnimF(ImGui::GetID(id), v ? 1.f : 0.f, 20.f);
+    ImU32 off = hov ? IM_COL32(56, 61, 72, 255) : IM_COL32(44, 48, 58, 255);
+    ImU32 bg = LerpCol(off, kUAccent, t);
     dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), bg, h * 0.5f);
-    float kx = v ? (p.x + w - 10.f) : (p.x + 10.f);
-    dl->AddCircleFilled(ImVec2(kx, p.y + h * 0.5f), 7.f, IM_COL32(245, 247, 251, 255),
+    float kx = p.x + 10.f + (w - 20.f) * t;
+    float kr = 6.2f + 0.8f * t;
+    dl->AddCircleFilled(ImVec2(kx, p.y + h * 0.5f), kr, IM_COL32(245, 247, 251, 255),
                         12);
     ImGui::InvisibleButton(id, ImVec2(w, h));
     if (ImGui::IsItemClicked(0)) v = !v;
@@ -215,17 +263,16 @@ bool FancyButton(const char* label, const ImVec2& size, bool accent) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     bool hov = ImGui::IsMouseHoveringRect(p, ImVec2(p.x + size.x, p.y + size.y));
-    ImU32 bg;
-    if (accent)
-        bg = hov ? IM_COL32(118, 156, 252, 255) : kUAccent;
-    else
-        bg = hov ? IM_COL32(36, 40, 49, 255) : IM_COL32(27, 30, 38, 255);
+    float hovT = AnimF(ImGui::GetID("btn"), hov ? 1.f : 0.f, 16.f);
+    ImU32 on = accent ? IM_COL32(118, 156, 252, 255) : IM_COL32(36, 40, 49, 255);
+    ImU32 off = accent ? kUAccent : IM_COL32(27, 30, 38, 255);
+    ImU32 bg = LerpCol(off, on, hovT);
     dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), bg, 6.f);
     if (!accent)
         dl->AddRect(p, ImVec2(p.x + size.x, p.y + size.y), kUStroke, 6.f, 0, 1.f);
     if (g_font) {
-        ImVec2 ts = ImGui::CalcTextSize(label);
-        dl->AddText(g_font, 15.f,
+        ImVec2 ts = g_font->CalcTextSizeA(kSizeBase, FLT_MAX, 0.f, label);
+        dl->AddText(g_font, kSizeBase,
                     ImVec2(p.x + (size.x - ts.x) * 0.5f, p.y + (size.y - ts.y) * 0.5f),
                     accent ? IM_COL32(255, 255, 255, 255) : kUText, label);
     }
@@ -243,12 +290,14 @@ bool RowSwitch(const char* label, const char* desc, bool* v, bool divider) {
     float w = ImGui::GetContentRegionAvail().x;
     float h = desc ? 46.f : 34.f;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddText(g_font, 15.f, ImVec2(p.x, p.y + (desc ? 0.f : (h - 15.f) * 0.5f)),
+    dl->AddText(g_font, kSizeBase, ImVec2(p.x, p.y + (desc ? 0.f : (h - kSizeBase) * 0.5f)),
                 kUText, label);
     if (desc && g_smallFont)
-        dl->AddText(g_smallFont, 12.5f, ImVec2(p.x, p.y + 21.f), kUDim, desc);
+        dl->AddText(g_smallFont, kSizeSmall, ImVec2(p.x, p.y + 21.f), kUDim, desc);
+    ImGui::PushID(label);
     ImGui::SetCursorScreenPos(ImVec2(p.x + w - 38.f, p.y + (h - 20.f) * 0.5f));
     bool nv = DrawSwitch("##sw", *v);
+    ImGui::PopID();
     bool changed = (nv != *v);
     *v = nv;
     if (divider) RowLine(p.x, w, p.y + h - 1.f);
@@ -261,10 +310,10 @@ bool RowKey(const char* label, const char* desc, int* key, bool divider) {
     float w = ImGui::GetContentRegionAvail().x;
     float h = desc ? 46.f : 34.f;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddText(g_font, 15.f, ImVec2(p.x, p.y + (desc ? 0.f : (h - 15.f) * 0.5f)),
+    dl->AddText(g_font, kSizeBase, ImVec2(p.x, p.y + (desc ? 0.f : (h - kSizeBase) * 0.5f)),
                 kUText, label);
     if (desc && g_smallFont)
-        dl->AddText(g_smallFont, 12.5f, ImVec2(p.x, p.y + 21.f), kUDim, desc);
+        dl->AddText(g_smallFont, kSizeSmall, ImVec2(p.x, p.y + 21.f), kUDim, desc);
     ImGui::SetCursorScreenPos(ImVec2(p.x + w - 76.f, p.y + (h - 22.f) * 0.5f));
     gui::KeybindButton(key);
     if (divider) RowLine(p.x, w, p.y + h - 1.f);
@@ -331,13 +380,16 @@ void DrawModuleCard(Module* m, float width) {
 
     dl->AddRectFilled(p, r2, on ? kUCardOn : (hov ? kUCardHov : kUCard), 8.f);
     dl->AddRect(p, r2, on ? IM_COL32(96, 138, 250, 150) : kUStroke, 8.f, 0, 1.f);
-    if (on)
-        dl->AddRectFilled(ImVec2(p.x + 2.f, p.y + 13.f), ImVec2(p.x + 5.f, p.y + h - 13.f),
-                          kUAccent, 1.5f);
+    // accent bar grows out of the middle when the module turns on
+    float barT = AnimF(ImGui::GetID("bar"), on ? 1.f : 0.f, 14.f);
+    float barH = (h - 26.f) * barT;
+    if (barH > 0.5f)
+        dl->AddRectFilled(ImVec2(p.x + 2.f, p.y + (h - barH) * 0.5f),
+                          ImVec2(p.x + 5.f, p.y + (h + barH) * 0.5f), kUAccent, 1.5f);
     if (g_font)
-        dl->AddText(g_font, 15.f, ImVec2(p.x + 16.f, p.y + 11.f), kUText, m->Name());
+        dl->AddText(g_font, kSizeBase, ImVec2(p.x + 16.f, p.y + 11.f), kUText, m->Name());
     if (m->Desc() && m->Desc()[0] && g_smallFont)
-        dl->AddText(g_smallFont, 12.5f, ImVec2(p.x + 16.f, p.y + 32.f), kUDim,
+        dl->AddText(g_smallFont, kSizeSmall, ImVec2(p.x + 16.f, p.y + 32.f), kUDim,
                     m->Desc());
 
     float sx = r2.x - 16.f - 38.f;
@@ -364,12 +416,12 @@ void DrawEmptyState() {
     const char* t1 = "nothing here yet";
     const char* t2 = "modules for this section are not in the build right now";
     if (g_font) {
-        ImVec2 s1 = ImGui::CalcTextSize(t1);
-        dl->AddText(g_font, 15.f, ImVec2(x + (w - s1.x) * 0.5f, y), kUDim, t1);
+        ImVec2 s1 = g_font->CalcTextSizeA(kSizeBase, FLT_MAX, 0.f, t1);
+        dl->AddText(g_font, kSizeBase, ImVec2(x + (w - s1.x) * 0.5f, y), kUDim, t1);
     }
     if (g_smallFont) {
-        ImVec2 s2 = g_smallFont->CalcTextSizeA(12.5f, FLT_MAX, 0.f, t2);
-        dl->AddText(g_smallFont, 12.5f, ImVec2(x + (w - s2.x) * 0.5f, y + 26.f),
+        ImVec2 s2 = g_smallFont->CalcTextSizeA(kSizeSmall, FLT_MAX, 0.f, t2);
+        dl->AddText(g_smallFont, kSizeSmall, ImVec2(x + (w - s2.x) * 0.5f, y + 26.f),
                     kUMuted, t2);
     }
     ImGui::Dummy(ImVec2(0, 110.f));
@@ -400,39 +452,47 @@ void DrawCategory(Client& c, Category cat) {
 void ApplyTheme() {
     ImGuiIO& io = ImGui::GetIO();
 
-    // Use the Verdana TTF embedded in font_data.h so glyph coverage
-    // (incl. Cyrillic for RU player names) does not depend on the fonts
-    // installed on the target machine. The static array outlives ImGui.
-    const ImWchar* ranges = io.Fonts->GetGlyphRangesCyrillic();
+    // Verdana TTF embedded in font_data.h: glyph coverage (incl. Cyrillic for
+    // RU player names) does not depend on installed fonts. ImGui 1.92 dynamic
+    // fonts rasterize any character of the TTF on demand, so no glyph ranges
+    // are needed and no explicit atlas Build() call either.
+    const unsigned ttfSize = (unsigned)sizeof(gui::kFontVerdana);
     ImFontConfig cfg;
     cfg.FontDataOwnedByAtlas = false;
-    cfg.GlyphRanges = ranges;
     g_font = io.Fonts->AddFontFromMemoryTTF(
-        (void*)gui::kFontVerdana, (int)sizeof(gui::kFontVerdana), 15.f, &cfg);
+        (void*)gui::kFontVerdana, (int)ttfSize, kSizeBase, &cfg);
     if (!g_font) g_font = io.Fonts->AddFontDefault();
-    cfg.GlyphRanges = ranges;
+    cfg.GlyphRanges = nullptr;
     g_smallFont = io.Fonts->AddFontFromMemoryTTF(
-        (void*)gui::kFontVerdana, (int)sizeof(gui::kFontVerdana), 12.5f, &cfg);
+        (void*)gui::kFontVerdana, (int)ttfSize, kSizeSmall, &cfg);
     if (!g_smallFont) g_smallFont = g_font;
-    cfg.GlyphRanges = ranges;
+    cfg.GlyphRanges = nullptr;
     g_headFont = io.Fonts->AddFontFromMemoryTTF(
-        (void*)gui::kFontVerdana, (int)sizeof(gui::kFontVerdana), 17.f, &cfg);
+        (void*)gui::kFontVerdana, (int)ttfSize, kSizeHead, &cfg);
     if (!g_headFont) g_headFont = g_font;
-    cfg.GlyphRanges = ranges;
+    cfg.GlyphRanges = nullptr;
     g_titleFont = io.Fonts->AddFontFromMemoryTTF(
-        (void*)gui::kFontVerdana, (int)sizeof(gui::kFontVerdana), 21.f, &cfg);
+        (void*)gui::kFontVerdana, (int)ttfSize, kSizeTitle, &cfg);
     if (!g_titleFont) g_titleFont = g_font;
     io.FontDefault = g_font;
 
-    // Force the atlas build now (normally lazy) so failures surface in the
-    // log instead of silently producing a garbage texture.
-    bool built = io.Fonts->Build();
-    int tw = 0, th = 0;
-    unsigned char* tpixels = nullptr;
-    io.Fonts->GetTexDataAsRGBA32(&tpixels, &tw, &th);
-    Log("[GUI] fonts: regular=%p title=%p verdana=%u bytes", (void*)g_font,
-        (void*)g_titleFont, (unsigned)sizeof(gui::kFontVerdana));
-    Log("[GUI] atlas build=%d texture=%dx%d", built ? 1 : 0, tw, th);
+    Log("[GUI] fonts: small=%p base=%p head=%p title=%p verdana=%u bytes",
+        (void*)g_smallFont, (void*)g_font, (void*)g_headFont, (void*)g_titleFont,
+        ttfSize);
+    if (g_font && g_smallFont && g_headFont && g_titleFont) {
+        Log("[GUI] font sizes: %.0f/%.0f/%.0f/%.0f (legacy)",
+            g_smallFont->LegacySize, g_font->LegacySize, g_headFont->LegacySize,
+            g_titleFont->LegacySize);
+        Log("[GUI] glyph check base: latin=%d cyrA=%d cyrYa=%d",
+            g_font->IsGlyphInFont('A') ? 1 : 0,
+            g_font->IsGlyphInFont(0x0410) ? 1 : 0,   // А
+            g_font->IsGlyphInFont(0x044F) ? 1 : 0);  // я
+        Log("[GUI] glyph check small: latin=%d cyrA=%d",
+            g_smallFont->IsGlyphInFont('A') ? 1 : 0,
+            g_smallFont->IsGlyphInFont(0x0410) ? 1 : 0);
+    } else {
+        LogWarn("[GUI] font setup incomplete, some sizes fall back");
+    }
     GLint maxTex = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
     Log("[GUI] GL_MAX_TEXTURE_SIZE=%d", (int)maxTex);
@@ -479,6 +539,8 @@ void ApplyTheme() {
     s.Colors[ImGuiCol_NavCursor] = kAccent;
 }
 
+void OnMenuClosed() { g_menuAnim = 0.f; }
+
 void DrawMainMenu() {
     UpdateKeyCapture();
 
@@ -486,16 +548,22 @@ void DrawMainMenu() {
     if (io.DisplaySize.x < 320.f || io.DisplaySize.y < 240.f) return;
 
     Client& c = Client::Instance();
+
+    // scale-in on open: the window grows from 90% while fading in
+    g_menuAnim = AnimF(0x4D454E55u, 1.f, 14.f);
+    float a = std::clamp(g_menuAnim, 0.f, 1.f);
     const ImVec2 size(800.f, 520.f);
-    ImVec2 pos((io.DisplaySize.x - size.x) * 0.5f,
-               (io.DisplaySize.y - size.y) * 0.5f);
+    ImVec2 winSize(size.x * (0.90f + 0.10f * a), size.y * (0.90f + 0.10f * a));
+    ImVec2 pos((io.DisplaySize.x - winSize.x) * 0.5f,
+               (io.DisplaySize.y - winSize.y) * 0.5f);
     if (pos.x < 8.f) pos.x = 8.f;
     if (pos.y < 8.f) pos.y = 8.f;
 
-    DrawMenuShadow(pos, size);
+    DrawMenuShadow(pos, winSize, a);
     ImGui::SetNextWindowPos(pos);
-    ImGui::SetNextWindowSize(size);
+    ImGui::SetNextWindowSize(winSize);
 
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.45f + 0.55f * a);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::Begin("##SummerMenu", nullptr,
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
@@ -507,11 +575,21 @@ void DrawMainMenu() {
     int tab = DrawTabs();
 
     float cx = pos.x + kSideW + 20.f;
-    float cw = size.x - kSideW - 40.f;
+    float cw = winSize.x - kSideW - 40.f;
     float cy = pos.y + kHeadH + 16.f;
 
+    // content fades/slides in when the tab changes
+    static int s_lastTab = 0;
+    static float s_tabFade = 1.f;
+    if (s_lastTab != tab) {
+        s_lastTab = tab;
+        s_tabFade = 0.f;
+    }
+    s_tabFade = AnimF(0x46414445u, 1.f, 12.f);
+    float yoff = (1.f - s_tabFade) * 10.f;
+
     if (g_headFont)
-        ImGui::GetWindowDrawList()->AddText(g_headFont, 17.f, ImVec2(cx, cy + 6.f),
+        ImGui::GetWindowDrawList()->AddText(g_headFont, kSizeHead, ImVec2(cx, cy + 6.f),
                                             kUText, kTabs[tab]);
 
     if (tab < 3) {
@@ -522,9 +600,10 @@ void DrawMainMenu() {
     }
 
     float by = cy + 40.f;
-    float bh = pos.y + size.y - 16.f - by;
-    ImGui::SetCursorScreenPos(ImVec2(cx, by));
+    float bh = pos.y + winSize.y - 16.f - by;
+    ImGui::SetCursorScreenPos(ImVec2(cx, by + yoff));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.35f + 0.65f * s_tabFade);
     ImGui::BeginChild("##body", ImVec2(cw, bh), false);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.f, 10.f));
     switch (tab) {
@@ -543,31 +622,41 @@ void DrawMainMenu() {
     }
     ImGui::PopStyleVar();
     ImGui::EndChild();
+    ImGui::PopStyleVar();
     ImGui::PopStyleColor();
 
     ImGui::End();
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
 }
 
 void DrawWatermark() {
-    if (!g_config.GetBool("client.watermark", true)) return;
     if (!g_font || !g_smallFont) return;
+    bool show = g_config.GetBool("client.watermark", true);
+    static float s_wmA = 0.f;
+    s_wmA = AnimF(0x574D414Eu, show ? 1.f : 0.f, 8.f);
+    if (s_wmA < 0.015f) return;
+    float a = std::clamp(s_wmA, 0.f, 1.f);
+
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     const char* name = "SUMMER CLIENT";
     char fps[24];
     snprintf(fps, sizeof fps, "%d fps", (int)(ImGui::GetIO().Framerate + 0.5f));
-    ImVec2 ts = g_font->CalcTextSizeA(14.f, FLT_MAX, 0.f, name);
-    ImVec2 fs = g_smallFont->CalcTextSizeA(12.f, FLT_MAX, 0.f, fps);
+    ImVec2 ts = g_font->CalcTextSizeA(kSizeBase, FLT_MAX, 0.f, name);
+    ImVec2 fs = g_smallFont->CalcTextSizeA(kSizeSmall, FLT_MAX, 0.f, fps);
     float h = 30.f;
     float w = 26.f + ts.x + 12.f + fs.x + 16.f;
-    ImVec2 a(10.f, 10.f), b(10.f + w, 10.f + h);
-    dl->AddRectFilled(a, b, IM_COL32(14, 16, 20, 225), 8.f);
-    dl->AddRect(a, b, IM_COL32(96, 138, 250, 90), 8.f, 0, 1.f);
-    dl->AddCircleFilled(ImVec2(a.x + 15.f, a.y + h * 0.5f), 3.5f, kUAccent);
-    dl->AddText(g_font, 14.f, ImVec2(a.x + 26.f, a.y + (h - 14.f) * 0.5f), kUText, name);
-    dl->AddText(g_smallFont, 12.f,
-                ImVec2(a.x + 26.f + ts.x + 12.f, a.y + (h - 12.f) * 0.5f), kUMuted,
-                fps);
+    // slides in from off-screen left
+    float x = 10.f - 40.f * (1.f - a);
+    ImVec2 p0(x, 10.f), p1(x + w, 10.f + h);
+    dl->AddRectFilled(p0, p1, IM_COL32(14, 16, 20, (int)(225 * a)), 8.f);
+    dl->AddRect(p0, p1, IM_COL32(96, 138, 250, (int)(90 * a)), 8.f, 0, 1.f);
+    dl->AddCircleFilled(ImVec2(p0.x + 15.f, p0.y + h * 0.5f), 3.5f,
+                        IM_COL32(96, 138, 250, (int)(255 * a)));
+    dl->AddText(g_font, kSizeBase, ImVec2(p0.x + 26.f, p0.y + (h - kSizeBase) * 0.5f),
+                IM_COL32(232, 236, 243, (int)(255 * a)), name);
+    dl->AddText(g_smallFont, kSizeSmall,
+                ImVec2(p0.x + 26.f + ts.x + 12.f, p0.y + (h - kSizeSmall) * 0.5f),
+                IM_COL32(96, 104, 120, (int)(255 * a)), fps);
 }
 
 ImDrawList* WorldDrawList() { return ImGui::GetBackgroundDrawList(); }
@@ -580,8 +669,8 @@ bool Checkbox(const char* label, bool* v) {
     float w = ImGui::GetContentRegionAvail().x;
     float h = 30.f;
     if (g_font)
-        ImGui::GetWindowDrawList()->AddText(g_font, 15.f,
-                                            ImVec2(p.x, p.y + (h - 15.f) * 0.5f),
+        ImGui::GetWindowDrawList()->AddText(g_font, kSizeBase,
+                                            ImVec2(p.x, p.y + (h - kSizeBase) * 0.5f),
                                             kUText, label);
     ImGui::SetCursorScreenPos(ImVec2(p.x + w - 38.f, p.y + (h - 20.f) * 0.5f));
     bool nv = DrawSwitch("##sw", *v);
@@ -606,7 +695,7 @@ bool SliderFloat(const char* label, float* v, float mn, float mx) {
     ImGui::TextUnformatted(label);
     float avail = ImGui::GetContentRegionAvail().x;
     ImGui::SameLine(avail - 36);
-    ImGui::TextColored(kAccent, "%.1f", *v);
+    ImGui::TextColored(kAccent, "%.2f", *v);
     char id[96];
     snprintf(id, sizeof id, "##slf_%s", label);
     return ImGui::SliderFloat(id, v, mn, mx);
@@ -687,20 +776,24 @@ bool KeybindButton(int* key) {
     const float w = 76.f, h = 22.f;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     bool hov = ImGui::IsMouseHoveringRect(p, ImVec2(p.x + w, p.y + h));
-    ImU32 bg;
-    if (capture)
-        bg = kUAccent;
-    else if (hov)
-        bg = IM_COL32(38, 42, 52, 255);
-    else
-        bg = IM_COL32(27, 30, 38, 255);
+
+    // pulse while waiting for a key
+    float pulse = capture ? (0.6f + 0.4f * std::sin((float)ImGui::GetTime() * 6.0)) : 1.f;
+    float hovT = AnimF(ImGui::GetID("kb"), capture ? 1.f : (hov ? 1.f : 0.f), 14.f);
+    ImU32 bgOff = hov ? IM_COL32(38, 42, 52, 255) : IM_COL32(27, 30, 38, 255);
+    ImU32 bg = LerpCol(bgOff, kUAccent, hovT * pulse);
     dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), bg, 6.f);
-    dl->AddRect(p, ImVec2(p.x + w, p.y + h), capture ? kUAccent : kUStroke, 6.f, 0, 1.f);
+    ImU32 border = capture
+                       ? LerpCol(kUStroke, kUAccent, pulse)
+                       : (hov ? kUDim : kUStroke);
+    dl->AddRect(p, ImVec2(p.x + w, p.y + h), border, 6.f, 0, 1.f);
     if (g_smallFont) {
-        ImVec2 ts = g_smallFont->CalcTextSizeA(12.5f, FLT_MAX, 0.f, buf);
-        dl->AddText(g_smallFont, 12.5f,
-                    ImVec2(p.x + (w - ts.x) * 0.5f, p.y + (h - 12.5f) * 0.5f),
-                    capture ? IM_COL32(255, 255, 255, 255) : (hov ? kUText : kUDim),
+        ImVec2 ts = g_smallFont->CalcTextSizeA(kSizeSmall, FLT_MAX, 0.f, buf);
+        ImU32 tc = capture
+                       ? IM_COL32(255, 255, 255, (int)(255 * pulse))
+                       : (hov ? kUText : kUDim);
+        dl->AddText(g_smallFont, kSizeSmall,
+                    ImVec2(p.x + (w - ts.x) * 0.5f, p.y + (h - kSizeSmall) * 0.5f), tc,
                     buf);
     }
     ImGui::PushID(key);
@@ -724,7 +817,7 @@ void Section(const char* title) {
     dl->AddRectFilled(ImVec2(p.x, p.y + 3.f), ImVec2(p.x + 3.f, p.y + 13.f), kUAccent,
                       1.5f);
     if (g_smallFont)
-        dl->AddText(g_smallFont, 12.5f, ImVec2(p.x + 11.f, p.y + 1.f), kUDim, title);
+        dl->AddText(g_smallFont, kSizeSmall, ImVec2(p.x + 11.f, p.y + 1.f), kUDim, title);
     ImGui::Dummy(ImVec2(0, 17.f));
 }
 
@@ -744,8 +837,8 @@ void Help(const char* text) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x;
     if (w < 40.f) w = 40.f;
-    ImVec2 ts = g_smallFont->CalcTextSizeA(12.5f, FLT_MAX, w, text);
-    ImGui::GetWindowDrawList()->AddText(g_smallFont, 12.5f, p, kUDim, text, NULL, w);
+    ImVec2 ts = g_smallFont->CalcTextSizeA(kSizeSmall, FLT_MAX, w, text);
+    ImGui::GetWindowDrawList()->AddText(g_smallFont, kSizeSmall, p, kUDim, text, NULL, w);
     ImGui::Dummy(ImVec2(0, ts.y + 3.f));
 }
 
