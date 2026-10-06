@@ -23,6 +23,7 @@ private:
     unsigned char insertPrev_ = 0;
     bool glReady_ = false;
     bool imguiReady_ = false;
+    int fontsWarmFrames_ = 0;  // remaining frames to pre-rasterize glyphs
 };
 
 }  // namespace summer

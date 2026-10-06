@@ -452,25 +452,33 @@ void DrawCategory(Client& c, Category cat) {
 void ApplyTheme() {
     ImGuiIO& io = ImGui::GetIO();
 
-    // Verdana TTF embedded in font_data.h: glyph coverage (incl. Cyrillic for
-    // RU player names) does not depend on installed fonts. ImGui 1.92 dynamic
-    // fonts rasterize any character of the TTF on demand, so no glyph ranges
-    // are needed and no explicit atlas Build() call either.
+    // Latin + Cyrillic + punctuation for RU UI text.
+    static const ImWchar kGlyphRanges[] = {
+        0x0020, 0x007E, // ASCII
+        0x00A0, 0x024F, // Latin-1 + Latin Ext + IPA
+        0x0370, 0x03FF, // Greek
+        0x0400, 0x04FF, // Cyrillic
+        0x2010, 0x2027, // punctuation
+        0, 0
+    };
+
+    // Verdana TTF embedded in font_data.h: glyph coverage does not depend on
+    // installed fonts. ImGui 1.92 dynamic fonts rasterize glyphs on demand;
+    // we still pre-rasterize everything in WarmFonts() so the atlas does not
+    // grow mid-frame (which drops already-recorded UVs -> missing letters).
     const unsigned ttfSize = (unsigned)sizeof(gui::kFontVerdana);
     ImFontConfig cfg;
     cfg.FontDataOwnedByAtlas = false;
+    cfg.GlyphRanges = kGlyphRanges;
     g_font = io.Fonts->AddFontFromMemoryTTF(
         (void*)gui::kFontVerdana, (int)ttfSize, kSizeBase, &cfg);
     if (!g_font) g_font = io.Fonts->AddFontDefault();
-    cfg.GlyphRanges = nullptr;
     g_smallFont = io.Fonts->AddFontFromMemoryTTF(
         (void*)gui::kFontVerdana, (int)ttfSize, kSizeSmall, &cfg);
     if (!g_smallFont) g_smallFont = g_font;
-    cfg.GlyphRanges = nullptr;
     g_headFont = io.Fonts->AddFontFromMemoryTTF(
         (void*)gui::kFontVerdana, (int)ttfSize, kSizeHead, &cfg);
     if (!g_headFont) g_headFont = g_font;
-    cfg.GlyphRanges = nullptr;
     g_titleFont = io.Fonts->AddFontFromMemoryTTF(
         (void*)gui::kFontVerdana, (int)ttfSize, kSizeTitle, &cfg);
     if (!g_titleFont) g_titleFont = g_font;
@@ -485,8 +493,8 @@ void ApplyTheme() {
             g_titleFont->LegacySize);
         Log("[GUI] glyph check base: latin=%d cyrA=%d cyrYa=%d",
             g_font->IsGlyphInFont('A') ? 1 : 0,
-            g_font->IsGlyphInFont(0x0410) ? 1 : 0,   // А
-            g_font->IsGlyphInFont(0x044F) ? 1 : 0);  // я
+            g_font->IsGlyphInFont(0x0410) ? 1 : 0,
+            g_font->IsGlyphInFont(0x044F) ? 1 : 0);
         Log("[GUI] glyph check small: latin=%d cyrA=%d",
             g_smallFont->IsGlyphInFont('A') ? 1 : 0,
             g_smallFont->IsGlyphInFont(0x0410) ? 1 : 0);
@@ -539,6 +547,54 @@ void ApplyTheme() {
     s.Colors[ImGuiCol_NavCursor] = kAccent;
 }
 
+// Force-rasterize every glyph we use into the ImGui 1.92 dynamic atlas.
+// Must be called AFTER the first NewFrame() (Builder exists). Without this
+// the atlas can grow mid-frame and already-recorded UVs go stale -> missing
+// letters in the first frames.
+void WarmFonts() {
+    static const ImWchar kRanges[] = {
+        0x0020, 0x007E,
+        0x00A0, 0x024F,
+        0x0370, 0x03FF,
+        0x0400, 0x04FF,
+        0x2010, 0x2027,
+        0, 0
+    };
+    static bool s_logged = false;
+    ImFont* fonts[] = { g_smallFont, g_font, g_headFont, g_titleFont };
+    for (ImFont* f : fonts) {
+        if (!f) continue;
+        ImFontBaked* baked = f->GetFontBaked(f->LegacySize);
+        if (!baked) {
+            if (!s_logged)
+                LogWarn("[GUI] WarmFonts: no baked for %s size=%.0f",
+                        f->GetDebugName(), f->LegacySize);
+            continue;
+        }
+        int total = 0, loaded = 0;
+        for (const ImWchar* r = kRanges; r[0]; r += 2) {
+            for (unsigned c = r[0]; c <= (unsigned)r[1]; ++c) {
+                ++total;
+                baked->FindGlyph((ImWchar)c);
+                if (baked->IsGlyphLoaded((ImWchar)c)) ++loaded;
+            }
+        }
+        if (!s_logged) {
+            int tw = 0, th = 0;
+            if (baked->ContainerAtlas && baked->ContainerAtlas->TexData) {
+                tw = baked->ContainerAtlas->TexData->Width;
+                th = baked->ContainerAtlas->TexData->Height;
+            }
+            Log("[GUI] WarmFonts %s size=%.0f glyphs=%d/%d atlas=%dx%d",
+                f->GetDebugName(), f->LegacySize, loaded, total, tw, th);
+            if (loaded < total / 4)
+                LogWarn("[GUI] WarmFonts: only %d/%d glyphs loaded for %s",
+                        loaded, total, f->GetDebugName());
+        }
+    }
+    s_logged = true;
+}
+
 void OnMenuClosed() { g_menuAnim = 0.f; }
 
 void DrawMainMenu() {
@@ -563,13 +619,14 @@ void DrawMainMenu() {
     ImGui::SetNextWindowPos(pos);
     ImGui::SetNextWindowSize(winSize);
 
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.45f + 0.55f * a);
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.75f + 0.25f * a);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::Begin("##SummerMenu", nullptr,
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    if (g_font) ImGui::PushFont(g_font, kSizeBase);
 
     DrawHeader();
     int tab = DrawTabs();
@@ -626,6 +683,7 @@ void DrawMainMenu() {
     ImGui::PopStyleColor();
 
     ImGui::End();
+    if (g_font) ImGui::PopFont();
     ImGui::PopStyleVar(2);
 }
 

@@ -32,6 +32,7 @@ void Overlay::Shutdown() {
         ImGui::DestroyContext();
         glReady_ = false;
         imguiReady_ = false;
+        fontsWarmFrames_ = 0;
     }
 }
 
@@ -92,6 +93,7 @@ void Overlay::OnSwap() {
             ImGui::DestroyContext();
             glReady_ = false;
             imguiReady_ = false;
+            fontsWarmFrames_ = 0;
             Log("[Overlay] GL context changed, reinitialized ImGui");
         }
         lastCtx_ = ctx;
@@ -122,6 +124,14 @@ void Overlay::OnSwap() {
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
+
+    // ImGui 1.92 dynamic fonts: pre-rasterize glyphs for the first ~10 frames
+    // after init. Prevents mid-frame atlas growth which drops already-recorded
+    // UVs -> missing letters in the menu.
+    if (imguiReady_ && fontsWarmFrames_ < 10) {
+        gui::WarmFonts();
+        ++fontsWarmFrames_;
+    }
 
     // --- input ---
     ImGuiIO& io = ImGui::GetIO();

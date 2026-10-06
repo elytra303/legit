@@ -6,6 +6,7 @@ namespace summer {
 namespace gui {
 
 void ApplyTheme();
+void WarmFonts();      // force-rasterize glyphs into the atlas (call after NewFrame)
 void DrawMainMenu();
 void DrawWatermark();
 void OnMenuClosed();  // reset entry animations
