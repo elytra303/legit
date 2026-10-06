@@ -1,10 +1,9 @@
 // Summer Client - JVMTI agent entry point.
 //
 // Loaded with -agentpath:path\summer_client.dll. Resolves the Minecraft
-// singleton through JNI, registers all modules and installs a MinHook detour
-// on glfwSwapBuffers (in the glfw native library the game already loaded) so
-// the overlay renders and the game loop is driven once per frame on the
-// render thread.
+// singleton through JNI and installs a MinHook detour on glfwSwapBuffers (in
+// the glfw native library the game already loaded) so the overlay renders and
+// the game loop is driven once per frame on the render thread.
 
 #include <windows.h>
 
@@ -18,7 +17,6 @@
 #include "overlay/overlay.h"
 #include "summer/client.h"
 #include "summer/jvm.h"
-#include "summer/registry.h"
 #include "util/log.h"
 
 namespace summer {
@@ -94,7 +92,6 @@ extern "C" __declspec(dllexport) jint JNICALL Agent_OnLoad(JavaVM* vm, char* opt
     JVM::Init(vm, jvmti);
 
     Client& c = Client::Instance();
-    RegisterAllModules(c);
     c.Initialize();
 
     std::thread(WatchThread).detach();

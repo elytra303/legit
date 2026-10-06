@@ -11,9 +11,15 @@ endif()
 
 include(FetchContent)
 
-FetchContent_Declare(imgui GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG v1.92.0)
+# Dear ImGui is vendored in third_party/imgui (v1.92.0) so the build works
+# offline; MinHook is still pulled from the network.
+set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
+if(NOT EXISTS ${IMGUI_DIR}/imgui.h)
+    message(FATAL_ERROR "Dear ImGui not found at ${IMGUI_DIR}")
+endif()
+
 FetchContent_Declare(MinHook GIT_REPOSITORY https://github.com/TsudaKageyu/minhook.git GIT_TAG v1.3.4)
-FetchContent_MakeAvailable(imgui MinHook)
+FetchContent_MakeAvailable(MinHook)
 
 set(SUMMER_SOURCES
     src/main.cpp
@@ -22,32 +28,21 @@ set(SUMMER_SOURCES
     src/summer/config.cpp
     src/summer/jvm.cpp
     src/summer/module.cpp
-    src/summer/registry.cpp
     src/gui/gui.cpp
     src/overlay/overlay.cpp
     src/util/log.cpp
     src/util/random.cpp
-    src/modules/combat/hitbox.cpp
-    src/modules/combat/triggerbot.cpp
-    src/modules/combat/autoswap.cpp
-    src/modules/combat/clickpearl.cpp
-    src/modules/visual/esp.cpp
-    src/modules/visual/hitboxes.cpp
-    src/modules/visual/removals.cpp
-    src/modules/movement/autosprint.cpp
-    src/modules/movement/screenwalk.cpp
-    src/modules/movement/elytraswap.cpp
-    ${imgui_SOURCE_DIR}/imgui.cpp
-    ${imgui_SOURCE_DIR}/imgui_draw.cpp
-    ${imgui_SOURCE_DIR}/imgui_tables.cpp
-    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
 add_library(SummerClient SHARED ${SUMMER_SOURCES})
 
 target_include_directories(SummerClient PRIVATE
-    src ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends
+    src ${IMGUI_DIR} ${IMGUI_DIR}/backends
 )
 
 target_compile_definitions(SummerClient PRIVATE
